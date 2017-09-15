@@ -1,7 +1,8 @@
 #include <stdio.h>
+#include "sift.h"
 
-int main (int argc, char **argv)
+int main( int argc, char **argv )
 {
-	printf("hello world");
+	sift( argv[2], argv[1] );
 	return 0;
 }
