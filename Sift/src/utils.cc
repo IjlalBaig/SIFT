@@ -5,7 +5,7 @@
  *
  * Image manipulation
  */
-int image::imload( cv::Mat &img, const char *path, const bool color )
+int image::imload( cv::Mat &img, const std::string path, const bool color )
 {
 	if (color)
 		cv::imread( path, CV_LOAD_IMAGE_COLOR ).convertTo( img, CV_32F );
@@ -24,7 +24,7 @@ int image::imshow( const cv::Mat &img )
 	cv::waitKey( 0 );
 	return 0;
 }
-int image::imsave( const char *path, cv::Mat &img )
+int image::imsave( const std::string path, cv::Mat &img )
 {
 	if(!img.data)
 		std::cout <<  "Could not open or find the image" << std::endl ;

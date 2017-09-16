@@ -7,12 +7,13 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <iostream>
+#include <string>
 #include <cmath>
 
 namespace image{
-int imload( cv::Mat &img, const char *path, const bool color );
+int imload( cv::Mat &img, const std::string path, const bool color );
 int imshow( const cv::Mat &img );
-int imsave( const char *path, cv::Mat &img );
+int imsave( const std::string path, cv::Mat &img );
 int drawPoint( cv:: Mat &img, float x, float y, float scale, float orientation );
 }
 

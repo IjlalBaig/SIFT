@@ -2,43 +2,110 @@
 #include "utils.h"
 #include "cudaUtils.h"
 #include "cudaSiftH.h"
+#include "cudaImage.h"
 
 
-int sift( char *dstPath, char *srcPath ){
-	/* Load image */
-	cv::Mat imgMat;
-	image::imload( imgMat, srcPath, false );
+int sift( std::string dstPath, std::string *srcPath)
+{
+	//	Load image batch to Mat object
+	cv::Mat matImg[BATCH_SIZE];
+	int width[BATCH_SIZE];
+	int height[BATCH_SIZE];
+	for (int i = 0; i < BATCH_SIZE; ++i)
+	{
+		image::imload( matImg[i], srcPath[i], false );
+		width[i] = matImg[i].cols;
+		height[i] = matImg[i].rows;
+	}
 
-	/* Define host and device data */
-	float *h_data;
-	float *d_data;
-	int width = imgMat.cols;
-	int height = imgMat.rows;
-	int pitch;
+	//	Allocate Cuda Objects
+	CudaImage cuImg[BATCH_SIZE];
+	SiftData siftData[BATCH_SIZE];
+	for (int i = 0; i < BATCH_SIZE; ++i)
+	{
+		cuImg[i].Allocate( width[i], height[i], NULL, (float *)matImg[i].data );
+		siftData[i].Allocate(MAX_POINTS, NULL, NULL);
+	}
 
-	/* Allocate host and device Memory */
-	h_data = (float *)malloc( width*height*sizeof( float ) );
-	CUDA_SAFECALL( cudaMallocPitch( (void **)&d_data, (size_t *)(&pitch), (size_t)(width*sizeof(float)), (size_t)(height) ) );
-	pitch/=(sizeof(int));
+	//	Create batch streams
+	cudaStream_t stream[BATCH_SIZE];
+	for (int i = 0; i < BATCH_SIZE; ++i)
+		CUDA_SAFECALL( cudaStreamCreate(&stream[i]));
 
-	/* Set host and device data */
-	h_data = (float *)imgMat.data;
-	CUDA_SAFECALL( cudaMemcpy2D( (void *) d_data, (size_t)(pitch*sizeof(float)), (const void *) h_data, (size_t)(width*sizeof(float)), (size_t)(width*sizeof(float)), (size_t)height, cudaMemcpyHostToDevice ) );
+	//	Execute sift on streams
+	for (int i = 0; i < BATCH_SIZE; ++i)
+	{
+		//	Upload CudaImage to GPU
+		cuImg[i].Upload(stream[i]);
+		siftData[i].Upload(stream[i]);
 
+		//	Launch Kernels
+		testcopyKernel(stream[i]);
+	}
 
-	/* Create stream */
-	cudaStream_t stream1;
-	CUDA_SAFECALL( cudaStreamCreate( &stream1 ) );
+	for (int i = 0; i < BATCH_SIZE; ++i)
+	{
+		//	Download results to CPU
+		cuImg[i].Readback(stream[i]);
+		siftData[i].Readback(stream[i]);
+	}
 
-	/* Compute sift */
-//		exclusiveSift();
-	/* Show result */
-	image::imshow( imgMat );
+	//	Show result
+	image::imshow( matImg[0] );
 
-	/* Save result */
-
-	/* Free resources (stream, h_pointer, d_pointer) */
-	CUDA_SAFECALL( cudaStreamDestroy( stream1 ) );
-	CUDA_SAFECALL( cudaFree( d_data ) );
+	//	Destroy cuda streams for batchSize
+	for (int i = 0; i < BATCH_SIZE; ++i)
+		CUDA_SAFECALL( cudaStreamDestroy(stream[i]));
 	return 0;
+}
+
+SiftData::SiftData():
+	numPts( 0 ), maxPts( 0 ), h_data( NULL ), d_data( NULL ),
+	d_internalAlloc( false ), h_internalAlloc( false )
+{
+
+}
+SiftData::~SiftData()
+{
+	if(d_internalAlloc && d_data!=NULL)
+		CUDA_SAFECALL( cudaFree( d_data ) );
+	d_data = NULL;
+	if(h_internalAlloc && h_data!=NULL)
+		free( h_data );
+	h_data = NULL;
+}
+
+void SiftData::Allocate(int max, SiftPoint *d_ptr, SiftPoint *h_ptr)
+{
+	numPts = 0;
+	maxPts = max;
+	d_data = d_ptr;
+	h_data = h_ptr;
+	if (d_ptr==NULL)
+	{
+		CUDA_SAFECALL( cudaMalloc( (void **)&d_data, (size_t)(maxPts * sizeof( SiftPoint )) ) );
+		if (d_data==NULL)
+			printf( "Failed to allocate Sift device data\n" );
+		d_internalAlloc = true;
+	}
+	if (h_ptr==NULL)
+	{
+		h_data = (SiftPoint *)malloc( maxPts * sizeof( SiftPoint ) );
+		if (h_data==NULL)
+			printf( "Failed to allocate Sift host data\n" );
+		h_internalAlloc = true;
+	}
+}
+
+double SiftData::Upload(cudaStream_t stream)
+{
+	if (d_data!=NULL && h_data!=NULL)
+		CUDA_SAFECALL( cudaMemcpyAsync( (void *)d_data, (const void *)h_data, maxPts * sizeof( SiftPoint ), cudaMemcpyHostToDevice, stream ) );
+	return 0.0;
+}
+
+double SiftData::Readback(cudaStream_t stream)
+{
+	CUDA_SAFECALL( cudaMemcpyAsync( (void *)h_data, (const void *)d_data, maxPts * sizeof( SiftPoint ), cudaMemcpyDeviceToHost, stream ) );
+	return 0.0;
 }
