@@ -3,4 +3,5 @@
 
 int exclusiveSift(float *d);
 void testcopyKernel(cudaStream_t &stream);
+void sharedKernel( cudaStream_t &stream );
 #endif
