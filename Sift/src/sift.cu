@@ -11,55 +11,55 @@ int sift( std::string dstPath, std::string *srcPath)
 	CUDA_SAFECALL( cudaStreamCreate(&stream) );
 	sharedKernel( stream );
 	CUDA_SAFECALL( cudaStreamDestroy(stream));
-	//	Load image batch to Mat object
-	cv::Mat matImg[BATCH_SIZE];
-	int width[BATCH_SIZE];
-	int height[BATCH_SIZE];
-	for (int i = 0; i < BATCH_SIZE; ++i)
-	{
-		image::imload( matImg[i], srcPath[i], false );
-		width[i] = matImg[i].cols;
-		height[i] = matImg[i].rows;
-	}
-
-	//	Allocate Cuda Objects
-	CudaImage cuImg[BATCH_SIZE];
-	SiftData siftData[BATCH_SIZE];
-	for (int i = 0; i < BATCH_SIZE; ++i)
-	{
-		cuImg[i].Allocate( width[i], height[i], NULL, (float *)matImg[i].data );
-		siftData[i].Allocate(MAX_POINTS, NULL, NULL);
-	}
-
-	//	Create batch streams
-	cudaStream_t stream[BATCH_SIZE];
-	for (int i = 0; i < BATCH_SIZE; ++i)
-		CUDA_SAFECALL( cudaStreamCreate( &stream[i] ) );
-
-	//	Execute sift on streams
-	for (int i = 0; i < BATCH_SIZE; ++i)
-	{
-		//	Upload CudaImage to GPU
-		cuImg[i].Upload(stream[i]);
-		siftData[i].Upload(stream[i]);
-
-		//	Launch Kernels
-		testcopyKernel(stream[i]);
-	}
-
-	for (int i = 0; i < BATCH_SIZE; ++i)
-	{
-		//	Download results to CPU
-		cuImg[i].Readback(stream[i]);
-		siftData[i].Readback(stream[i]);
-	}
-
-	//	Show result
-	image::imshow( matImg[0] );
-
-	//	Destroy cuda streams for batchSize
-	for (int i = 0; i < BATCH_SIZE; ++i)
-		CUDA_SAFECALL( cudaStreamDestroy(stream[i]));
+//	//	Load image batch to Mat object
+//	cv::Mat matImg[BATCH_SIZE];
+//	int width[BATCH_SIZE];
+//	int height[BATCH_SIZE];
+//	for (int i = 0; i < BATCH_SIZE; ++i)
+//	{
+//		image::imload( matImg[i], srcPath[i], false );
+//		width[i] = matImg[i].cols;
+//		height[i] = matImg[i].rows;
+//	}
+//
+//	//	Allocate Cuda Objects
+//	CudaImage cuImg[BATCH_SIZE];
+//	SiftData siftData[BATCH_SIZE];
+//	for (int i = 0; i < BATCH_SIZE; ++i)
+//	{
+//		cuImg[i].Allocate( width[i], height[i], NULL, (float *)matImg[i].data );
+//		siftData[i].Allocate(MAX_POINTS, NULL, NULL);
+//	}
+//
+//	//	Create batch streams
+//	cudaStream_t stream[BATCH_SIZE];
+//	for (int i = 0; i < BATCH_SIZE; ++i)
+//		CUDA_SAFECALL( cudaStreamCreate( &stream[i] ) );
+//
+//	//	Execute sift on streams
+//	for (int i = 0; i < BATCH_SIZE; ++i)
+//	{
+//		//	Upload CudaImage to GPU
+//		cuImg[i].Upload(stream[i]);
+//		siftData[i].Upload(stream[i]);
+//
+//		//	Launch Kernels
+//		testcopyKernel(stream[i]);
+//	}
+//
+//	for (int i = 0; i < BATCH_SIZE; ++i)
+//	{
+//		//	Download results to CPU
+//		cuImg[i].Readback(stream[i]);
+//		siftData[i].Readback(stream[i]);
+//	}
+//
+//	//	Show result
+//	image::imshow( matImg[0] );
+//
+//	//	Destroy cuda streams for batchSize
+//	for (int i = 0; i < BATCH_SIZE; ++i)
+//		CUDA_SAFECALL( cudaStreamDestroy(stream[i]));
 	return 0;
 }
 

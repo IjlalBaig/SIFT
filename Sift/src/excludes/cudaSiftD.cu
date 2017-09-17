@@ -9,18 +9,43 @@ __global__ void kernel()
 	printf("hi this is thread:%d\t%d\n", threadIdx.x, count);
 }
 
-__global__ void shKernel(float *data)
+__global__ void shKernel(float *data, int w, int p, int h, const int apronLeft, const int apronRight, const int apronUp, const int apronDown )
 {
 	extern __shared__ float shared[];
-	float *shMag, *shOri;
-	shMag = &shared[0];
-	shOri = &shared[blockDim.x+1];
 	int tx = threadIdx.x;
-	if (tx < blockDim.x && blockIdx.x == 0)
-		shMag[tx] = data[tx];
-	if (tx < blockDim.x && blockIdx.x == 1)
-		shOri[tx] = data[tx+ blockIdx.x*blockDim.x];
-	__syncthreads();
-	printf("threadIdx.x\t%d\t:\t%f\n", tx, shared[tx + blockIdx.x*blockDim.x]);
+	int ty = threadIdx.y;
+	int bDimX = blockDim.x;
+	int bDimY = blockDim.y;
+	int gx = tx + bDimX * blockIdx.x;
+	int gy = ty + bDimY * blockIdx.y;
+	if (gx == 0 && gy == 0)
+	{
+		for (int j = 0; j < h; ++j)
+		{
+			for (int i = 0; i < p; ++i)
+			{
+				printf( "%f  ", data[cuda2DTo1D( i, j, p )] );
+			}
+			printf( "\n" );
+		}
+
+	}
+	cudaMemcpyGlobalToShared( shared, data
+							, tx, ty, gx, gy
+							, bDimX, bDimY, w, p, h
+							, apronLeft, apronRight, apronUp, apronDown );
+	if (gx == 0 && gy == 0)
+	{
+		for (int j = 0; j < bDimY + apronUp + apronDown; ++j)
+		{
+			for (int i = 0; i < bDimX + apronLeft + apronRight; ++i)
+			{
+				printf( "%f  ", shared[cuda2DTo1D( i, j, bDimX + apronLeft + apronRight )] );
+			}
+			printf( "\n" );
+		}
+
+	}
+
 
 }
