@@ -26,11 +26,15 @@ void sharedKernel( cudaStream_t &stream )
 
 	CUDA_SAFECALL( cudaMemcpy((void *)d_data, (void *)h_data, (size_t)(gx * sizeof(float)), cudaMemcpyHostToDevice ) );
 
-	int sx = 5+4; // if size is incorrect shared memory will still work fine
-	int sy = 2+8;
+	int apronLeft = 5;
+	int apronRight = 3;
+	int apronUp = 1;
+	int apronDown = 10;
 	dim3 blockDim(4,2,1);
 	dim3 gridDim(1,1,1);
-	shKernel<<<gridDim, blockDim, sx*sy*sizeof( float ), stream>>>( d_data, w, p, h, 5, 0, 3, 5 );
+	int sx = apronLeft + apronRight + blockDim.x;
+	int sy = apronUp + apronDown + blockDim.y;
+	shKernel<<<gridDim, blockDim, sx*sy*sizeof( float ), stream>>>( d_data, w, p, h, apronLeft, apronRight, apronUp, apronDown );
 
 	free( h_data );
 	CUDA_SAFECALL( cudaFree( d_data ));

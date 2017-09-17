@@ -18,18 +18,18 @@ __global__ void shKernel(float *data, int w, int p, int h, const int apronLeft, 
 	int bDimY = blockDim.y;
 	int gx = tx + bDimX * blockIdx.x;
 	int gy = ty + bDimY * blockIdx.y;
-	if (gx == 0 && gy == 0)
-	{
-		for (int j = 0; j < h; ++j)
-		{
-			for (int i = 0; i < p; ++i)
-			{
-				printf( "%f  ", data[cuda2DTo1D( i, j, p )] );
-			}
-			printf( "\n" );
-		}
-
-	}
+//	if (gx == 0 && gy == 0)
+//	{
+//		for (int j = 0; j < h; ++j)
+//		{
+//			for (int i = 0; i < p; ++i)
+//			{
+//				printf( "%f  ", data[cuda2DTo1D( i, j, p )] );
+//			}
+//			printf( "\n" );
+//		}
+//
+//	}
 	cudaMemcpyGlobalToShared( shared, data
 							, tx, ty, gx, gy
 							, bDimX, bDimY, w, p, h
