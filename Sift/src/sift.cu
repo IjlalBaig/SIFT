@@ -7,10 +7,10 @@
 
 int sift( std::string dstPath, std::string *srcPath)
 {
-//	cudaStream_t stream;
-//	CUDA_SAFECALL( cudaStreamCreate(&stream) );
-//	sharedKernel( stream );
-//	CUDA_SAFECALL( cudaStreamDestroy(stream));
+	cudaStream_t stream;
+	CUDA_SAFECALL( cudaStreamCreate(&stream) );
+	sharedKernel( stream );
+	CUDA_SAFECALL( cudaStreamDestroy(stream));
 	//	Load image batch to Mat object
 	cv::Mat matImg[BATCH_SIZE];
 	int width[BATCH_SIZE];
