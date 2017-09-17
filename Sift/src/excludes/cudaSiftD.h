@@ -17,9 +17,9 @@ __device__ int cudaIDivUp( int num, int den ){return (num%den != 0) ? (num/den +
 __device__ int cudaIAlignUp( int A, int a ){return (A%a != 0) ? (A + a - A%a) : (A);}
 __device__ int cuda2DTo1D(int x, int y, int width){return x + y * width;}
 __device__ void cudaMemcpyGlobalToShared( float *s, const float *g
-			, const int tx, const int ty, const int gx, const int gy
-			, const int bDimX, const int bDimY, const int w, const int p, const int h
-			, const int apronLeft, const int apronRight, const int apronUp, const int apronDown )
+				, const int tx, const int ty, const int gx, const int gy
+				, const int bDimX, const int bDimY, const int w, const int p, const int h
+				, const int apronLeft, const int apronRight, const int apronUp, const int apronDown )
 {
 	int sx = 0;
 	int sy = 0;
