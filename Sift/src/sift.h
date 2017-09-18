@@ -34,4 +34,5 @@ class SiftData {
 };
 
 int sift( std::string dstPath, std::string *srcPath);
+
 #endif
