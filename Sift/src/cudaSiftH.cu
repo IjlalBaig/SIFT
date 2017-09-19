@@ -4,6 +4,44 @@
 #include "cudaUtils.h"
 
 
+
+void blurOctave(float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream)
+{
+	float k = pow(2,0.5);
+	// Get max Kernel size
+	int maxKernelSize = imfilter::gaussianSize( pow( k, N_SCALES + 1 ) * SIGMA );
+	// Get max apron Size
+	int maxApronStart = floor( maxKernelSize / 2 );
+	int maxApronEnd =  maxKernelSize - maxApronStart - 1;
+	// Set bankOffset to 1 for even filter size
+	int bankOff = (maxApronStart == maxApronEnd) ? (1):(0);
+	printf("%d\t%d\t%d\t%d", maxKernelSize, maxApronStart, maxApronEnd, bankOff);
+	// Set x-convolution kernel parameters
+	dim3 blockSize(WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1);
+	dim3 gridSize(iDivUp(width, WIDTH_CONV_BLOCK), iDivUp(height, HEIGHT_CONV_BLOCK), 1);
+	int sDimX = WIDTH_CONV_BLOCK + maxApronStart + maxApronEnd + bankOff;
+	int sDimY = HEIGHT_CONV_BLOCK + maxApronStart + maxApronEnd + bankOff;
+//	int sDimX = 6*WIDTH_CONV_BLOCK ;//+ maxApronStart + maxApronEnd + bankOff;
+//	int sDimY = 1*HEIGHT_CONV_BLOCK ;//+ maxApronStart + maxApronEnd + bankOff;
+	int sBlocks = 2;
+	blurKernel<<<gridSize, blockSize, sBlocks*sDimX*sDimY*sizeof(float), stream>>>(dst, src, width, pitch, height, maxApronStart, maxApronEnd, maxApronStart, maxApronEnd);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 void initDeviceConstant()
 {
 
@@ -49,22 +87,6 @@ void testSetConstants(cudaStream_t &stream)
 	kernelGaussianSize<<<1, 5, 0, stream>>>();
 	kernelGaussianVector<<<1, B_KERNEL_SIZE, 0, stream>>>();
 }
-
-//void blurOctave(float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream)
-//{
-//	// set constants
-//	// find halo for sigmaMax
-//	int apronMaxStart;
-//	int apronMaxEnd;
-//	int bankOff = 1; // if even Dim ftn of apronMaxStart + apronMaxEnd
-//
-//	//	x-convolution kernel parameters
-//	dim3 blockSize(WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1);
-//	dim3 gridSize(iDivUp(width, WIDTH_CONV_BLOCK), iDivUp(height, HEIGHT_CONV_BLOCK), 1);
-//	int sDimX = WIDTH_CONV_BLOCK + apronMaxStart + apronMaxEnd + bankOff;
-//	int sDimY = HEIGHT_CONV_BLOCK + apronMaxStart + apronMaxEnd + bankOff;
-//	blurKernel<<<gridSize, blockSize, sDimX*sDimY*sizeof(float), stream>>>(dst, src, width, pitch, height, apronMaxStart, apronMaxEnd, apronMaxStart, apronMaxEnd);
-//}
 
 void testcopyKernel( cudaStream_t &stream )
 {

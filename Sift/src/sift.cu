@@ -25,9 +25,9 @@ int sift( std::string dstPath, std::string *srcPath)
 	/*
 	 *
 	 * clean */
-//	cv::Mat1f matRes(matImg[0].rows, matImg[0].cols);
-//	CudaImage cuRes;
-//	cuRes.Allocate( matImg[0].cols, matImg[0].rows, NULL, (float *)matRes.data );
+	cv::Mat1f matRes(matImg[0].rows, matImg[0].cols);
+	CudaImage cuRes;
+	cuRes.Allocate( matImg[0].cols, matImg[0].rows, NULL, (float *)matRes.data );
 	/********/
 	//	Allocate Cuda Objects
 	CudaImage cuImg[BATCH_SIZE];
@@ -55,12 +55,12 @@ int sift( std::string dstPath, std::string *srcPath)
 		/*
 		 *
 		 * clean */
-//		cuRes.Upload(stream[0]);
+		cuRes.Upload(stream[0]);
 		/*********/
 		//	Launch Kernels
 //		testcopyKernel(stream[i]);
-		testSetConstants(stream[i]);
-//		blurOctave(cuRes.d_data, cuImg[i].d_data, cuRes.width, cuRes.pitch, cuRes.height, stream[i]);
+//		testSetConstants(stream[i]);
+		blurOctave(cuRes.d_data, cuImg[i].d_data, cuRes.width, cuRes.pitch, cuRes.height, stream[i]);
 	}
 
 	for (int i = 0; i < BATCH_SIZE; ++i)
@@ -68,9 +68,15 @@ int sift( std::string dstPath, std::string *srcPath)
 		//	Download results to CPU
 		cuImg[i].Readback(stream[i]);
 		siftData[i].Readback(stream[i]);
+		/*
+		 *
+		 * clean */
+		cuRes.Readback(stream[i]);
+		/**********/
 	}
 
 	//	Show result
+	image::imshow( matRes );
 //	image::imshow( matImg[0] );
 
 	//	Destroy cuda streams for batchSize

@@ -13,7 +13,7 @@
 
 
 #define WIDTH_CONV_BLOCK 32
-#define HEIGHT_CONV_BLOCK 8
+#define HEIGHT_CONV_BLOCK 32
 
 
 // Constant memory variables
