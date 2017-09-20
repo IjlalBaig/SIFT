@@ -14,6 +14,7 @@
 
 #define WIDTH_CONV_BLOCK 32
 #define HEIGHT_CONV_BLOCK 32
+#define DEFUALT_BLOCK_DIM 32
 
 
 // Constant memory variables
@@ -33,32 +34,65 @@ __device__ int cuda2DTo1D(int x, int y, int width){return x + y * width;}
 __device__ void cudaMemcpyGlobalToShared( float *s, const float *g
 					, const int tx, const int ty, const int gx, const int gy
 					, const int bDimX, const int bDimY, const int w, const int p, const int h
-					, const int apronLeft, const int apronRight, const int apronUp, const int apronDown )
+					, const int nTilesX, const int nTilesY
+					, const int apronLeft, const int apronRight, const int apronUp, const int apronDown, const int bankOffset)
 {
 	int sx = 0;
 	int sy = 0;
 	int gx_ = 0;
 	int gy_ = 0;
-	int sDimX = bDimX + apronLeft + apronRight;
-	int sDimY = bDimY + apronUp + apronDown;
+	int sDimX = apronLeft + bDimX*nTilesX + apronRight + bankOffset;
+	int sDimY = apronUp + bDimY*nTilesY + apronDown;
 	int apronBlocksX = cudaIDivUpNear(apronLeft, bDimX) + cudaIDivUpNear(apronRight, bDimX);
 	int apronBlocksY = cudaIDivUpNear(apronUp, bDimY) + cudaIDivUpNear(apronDown, bDimY);
 
-	for (int j = 0; j < apronBlocksY + 1; ++j)
+	for (int j = 0; j < nTilesY + apronBlocksY; ++j)
 	{
 		sy = ty + j*bDimY;
-		for (int i = 0; i < apronBlocksX + 1; ++i)
+		for (int i = 0; i < nTilesX + apronBlocksX; ++i)
 		{
-			sx = tx + i*bDimX;
+			sx =  tx + i*bDimX;
 
-			if (sx >= 0 && sx < sDimX && sy >= 0 && sy < sDimY)
+			if (sx >= 0 && sx < sDimX - bankOffset && sy >= 0 && sy < sDimY)
 			{
 				gx_ = gx - apronLeft + i*bDimX;
-				gy_ = gy - apronUp + j* bDimY;
+				gy_ = gy - apronUp + j*bDimY;
 				if(gx_ >= 0 && gx_ < w && gy_ >= 0 && gy_ < h)
 					s[cuda2DTo1D( sx, sy, sDimX)] = g[cuda2DTo1D( gx_, gy_, p )];
 				else
 					s[cuda2DTo1D( sx, sy, sDimX )] = 0;
+			}
+		}
+	}
+	__syncthreads();
+}
+
+__device__ void cudaMemcpySharedToGlobal( float *g, const float *s
+					, const int tx, const int ty, const int gx, const int gy
+					, const int bDimX, const int bDimY, const int w, const int p, const int h
+					, const int nTilesX, const int nTilesY
+					, const int apronLeft, const int apronRight, const int apronUp, const int apronDown, const int bankOffset)
+{
+	int sx = 0;
+	int sy = 0;
+	int gx_ = 0;
+	int gy_ = 0;
+	int sDimX = apronLeft + bDimX*nTilesX + apronRight + bankOffset;
+	int sDimY = apronUp + bDimY*nTilesY + apronDown;
+
+	for (int j = 0; j < nTilesY; ++j)
+	{
+		sy = apronUp + ty + j*bDimY;
+		for (int i = 0; i < nTilesX; ++i)
+		{
+			sx =  apronLeft + tx + i*bDimX;
+
+			if (sx >= apronLeft && sx < sDimX - apronRight - bankOffset && sy >= apronUp && sy < sDimY - apronDown)
+			{
+				gx_ = gx + i*bDimX;
+				gy_ = gy + j*bDimY;
+				if(gx_ >= 0 && gx_ < w && gy_ >= 0 && gy_ < h)
+					g[cuda2DTo1D( gx_, gy_, p )] = s[cuda2DTo1D( sx, sy, sDimX)];
 			}
 		}
 	}

@@ -3,9 +3,11 @@
 
 
 
-__global__ void blurKernel(float *dst, float *src,
-					int w, int p, int h,
-					const int apronLeft, const int apronRight, const int apronUp, const int apronDown )
+__global__ void blurKernel(float *gDst, float *gSrc
+						, int w, int p, int h
+						, const int nTilesX, const int nTilesY
+						, const int apronLeft, const int apronRight, const int apronUp, const int apronDown
+						, const int bankOffset)
 {
 
 
@@ -15,73 +17,26 @@ __global__ void blurKernel(float *dst, float *src,
 	int bDimY = blockDim.y;
 	int bIdxX = blockIdx.x;
 	int bIdxY = blockIdx.y;
-	// Avoid bank conflict by ensuring shared data words are odd numbered
-	int apronRight_ = ( (apronLeft + bDimX + apronRight)%2 != 0 ) ? ( apronRight ):( apronRight + 1 );
-	int haloLeft = 0;
-	int haloRight = 0;
 	int kernelOffset = 0;
-	int gx = tx + bDimX * bIdxX;
-	int gy = ty + bDimY * bIdxY;
+	int gx = tx + bDimX * bIdxX * nTilesX;
+	int gy = ty + bDimY * bIdxY * nTilesY;
 	int gIdx = gx + p * gy;
-//	int gDim = p*h;
-	int sDimX = (apronLeft + bDimX + apronRight_);
+	int sDimX = (apronLeft + bDimX + apronRight + bankOffset);
 	int sDimY = (apronUp + bDimY + apronDown);
-	int sDim = sDimX * sDimY;
-	int tx_ = tx;
-	int ty_ = ty;
 
 	extern __shared__ float shared[];
-//	float *s = &shared[0];
-//	float *s_ = &shared[sDim];
 
-	// Load shared data
-	cudaMemcpyGlobalToShared(shared, src, tx, ty, gx, gy, bDimX, bDimY, w, p, h, apronLeft, apronRight_, apronUp, apronDown);
-
-//	for (int i = 0; i < 1/*N_SCALES + 3*/; ++i)
-//	{
-//		 Convolve-X and transpose
-//		if (gx < w)
-//		{
-//
-//			haloLeft = cudaIDivUpNear(c_GaussianBlurSize[i], 2);
-//			haloRight = c_GaussianBlurSize[i] - haloLeft;
-//
-//			for (int j = 0; j < cudaIDivUpNear( sDimY, bDimY); ++j)	// loop tBlock over sDimY
-//			{
-//				ty_ = ty + j * bDimY;
-//				for (int k = 0; k < cudaIDivUpNear( sDimX, bDimX + haloLeft); ++k) // loop tBlock over sDimX
-//				{
-//				tx_ = tx + haloLeft + k * bDimX;
-//					if (( tx_ < (sDimX - haloRight) ) && ( ty_ < sDimY ))
-//					{
-//						float sum = 0;
-//						for (int l = 0; l < c_GaussianBlurSize[i]; ++l)
-//							sum = __fmaf_rn(c_GaussianBlur[kernelOffset + l], s[cuda2DTo1D(tx_ - haloLeft + l, ty_, sDimX)], sum);
-//						s_[cuda2DTo1D( ty_, tx_, sDimX)] = sum;
-//					}
-//				}
-//			}
-//			for (int j = 0; j < cudaIDivUpNear( sDimY, bDimY); ++j)	// loop tBlock over sDimY
-//			{
-//				ty_ = ty + j * bDimY;
-//				for (int k = 0; k < cudaIDivUpNear( sDimX, bDimX + haloLeft); ++k) // loop tBlock over sDimX
-//				{
-//				tx_ = tx + haloLeft + k * bDimX;
-//					if (( tx_ < (sDimX - haloRight) ) && ( ty_ < sDimY ))
-//					{
-//						float sum = 0;
-//						for (int l = 0; l < c_GaussianBlurSize[i]; ++l)
-//							sum = __fmaf_rn(c_GaussianBlur[kernelOffset + l], s_[cuda2DTo1D(tx_ - haloLeft + l, ty_, sDimX)], sum);
-//						s[cuda2DTo1D( ty_, tx_, sDimX)] = sum;
-//					}
-//				}
-//			}
-//			kernelOffset += c_GaussianBlurSize[i];
-//			__syncthreads();
-
-//		}
-//	}
-//	dst[gIdx] = s[cuda2DTo1D( apronLeft + tx, apronUp + ty, sDimX )];
+	// Load data to shared
+	cudaMemcpyGlobalToShared(shared, gSrc, tx, ty
+							, gx, gy, bDimX, bDimY, w, p, h
+							, nTilesX, nTilesY
+							, apronLeft, apronRight, apronUp, apronDown, bankOffset);
+	// Copy data to global
+	cudaMemcpySharedToGlobal(gDst, shared
+							, tx, ty, gx, gy
+							, bDimX, bDimY, w, p, h
+							, nTilesX, nTilesY
+							, apronLeft, apronRight, apronUp, apronDown, bankOffset);
 }
 
 
@@ -109,15 +64,20 @@ __global__ void kernel()
 	printf("hi this is thread:%d\t%d\n", threadIdx.x, count);
 }
 
-__global__ void shKernel(float *data, int w, int p, int h, const int apronLeft, const int apronRight, const int apronUp, const int apronDown )
+__global__ void shKernel(float *data
+						, int w, int p, int h
+						, const int nTilesX, const int nTilesY
+						, const int apronLeft, const int apronRight, const int apronUp, const int apronDown )
 {
 	extern __shared__ float shared[];
 	int tx = threadIdx.x;
 	int ty = threadIdx.y;
 	int bDimX = blockDim.x;
 	int bDimY = blockDim.y;
-	int gx = tx + bDimX * blockIdx.x;
-	int gy = ty + bDimY * blockIdx.y;
+	int bIdxX = blockIdx.x;
+	int bIdxY = blockIdx.y;
+	int gx = tx + bDimX * bIdxX;
+	int gy = ty + bDimY * bIdxY;
 //	if (gx == 0 && gy == 0)
 //	{
 //		for (int j = 0; j < h; ++j)
@@ -133,19 +93,34 @@ __global__ void shKernel(float *data, int w, int p, int h, const int apronLeft, 
 	cudaMemcpyGlobalToShared( shared, data
 							, tx, ty, gx, gy
 							, bDimX, bDimY, w, p, h
-							, apronLeft, apronRight, apronUp, apronDown );
+							, nTilesX, nTilesY
+							, apronLeft, apronRight, apronUp, apronDown, 0 );
 	if (gx == 0 && gy == 0)
 	{
-		for (int j = 0; j < bDimY + apronUp + apronDown; ++j)
+		for (int j = 0; j < apronUp +  bDimY*(nTilesY) + apronDown; ++j)
 		{
-			for (int i = 0; i < bDimX + apronLeft + apronRight; ++i)
+			for (int i = 0; i < apronLeft + bDimX*(nTilesX) + apronRight; ++i)
 			{
-				printf( "%f  ", shared[cuda2DTo1D( i, j, bDimX + apronLeft + apronRight )] );
+				printf( "%f  ", shared[cuda2DTo1D( i, j, apronLeft + bDimX*nTilesX + apronRight )] );
+			}
+			printf( "\n" );
+		}
+	}
+	cudaMemcpySharedToGlobal(data, shared
+							, tx, ty, gx, gy
+							, bDimX, bDimY, w, p, h
+							, nTilesX, nTilesY
+							, apronLeft, apronRight, apronUp, apronDown, 0);
+	if (gx == 0 && gy == 0)
+	{
+		for (int j = 0; j < h; ++j)
+		{
+			for (int i = 0; i < w; ++i)
+			{
+				printf( "%f  ", data[cuda2DTo1D( i, j, p)] );
 			}
 			printf( "\n" );
 		}
 
 	}
-
-
 }

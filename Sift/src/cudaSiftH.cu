@@ -14,17 +14,21 @@ void blurOctave(float *dst, float *src, int width, int pitch, int height, cudaSt
 	int maxApronStart = floor( maxKernelSize / 2 );
 	int maxApronEnd =  maxKernelSize - maxApronStart - 1;
 	// Set bankOffset to 1 for even filter size
-	int bankOff = (maxApronStart == maxApronEnd) ? (1):(0);
-	printf("%d\t%d\t%d\t%d", maxKernelSize, maxApronStart, maxApronEnd, bankOff);
+	int bankOffset = (maxApronStart == maxApronEnd) ? (1):(0);
 	// Set x-convolution kernel parameters
+	int nTilesX = 11;
+	int nTilesY = 1;
 	dim3 blockSize(WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1);
-	dim3 gridSize(iDivUp(width, WIDTH_CONV_BLOCK), iDivUp(height, HEIGHT_CONV_BLOCK), 1);
-	int sDimX = WIDTH_CONV_BLOCK + maxApronStart + maxApronEnd + bankOff;
-	int sDimY = HEIGHT_CONV_BLOCK + maxApronStart + maxApronEnd + bankOff;
-//	int sDimX = 6*WIDTH_CONV_BLOCK ;//+ maxApronStart + maxApronEnd + bankOff;
-//	int sDimY = 1*HEIGHT_CONV_BLOCK ;//+ maxApronStart + maxApronEnd + bankOff;
-	int sBlocks = 2;
-	blurKernel<<<gridSize, blockSize, sBlocks*sDimX*sDimY*sizeof(float), stream>>>(dst, src, width, pitch, height, maxApronStart, maxApronEnd, maxApronStart, maxApronEnd);
+	dim3 gridSize(iDivUp(width, WIDTH_CONV_BLOCK*nTilesX), iDivUp(height, HEIGHT_CONV_BLOCK*nTilesY), 1);
+	int sDimX = nTilesX*WIDTH_CONV_BLOCK + maxApronStart + maxApronEnd + bankOffset;
+	int sDimY = HEIGHT_CONV_BLOCK;
+
+	printf("sDimX \t%d\nsDimY \t%d\n", sDimX, sDimY);
+	blurKernel<<<gridSize, blockSize, sDimX*sDimY*sizeof(float), stream>>>(dst, src
+																		, width, pitch, height
+																		, nTilesX, nTilesY
+																		, maxApronStart, maxApronEnd, 0, 0
+																		, bankOffset);
 }
 
 
@@ -107,20 +111,25 @@ void sharedKernel( cudaStream_t &stream )
 	for (int i = 0; i < p; ++i)
 	{
 		for (int j = 0; j < h; ++j)
-			h_data[i + j*p] = (i < w) ? (i*i): -1;
+			h_data[i + j*p] = (i < w) ? ((i+1)*(i+1)): -1;
 	}
 
 	CUDA_SAFECALL( cudaMemcpy((void *)d_data, (void *)h_data, (size_t)(gx * sizeof(float)), cudaMemcpyHostToDevice ) );
+	int nTilesX = 2;
+	int nTilesY = 1;
 
-	int apronLeft = 5;
-	int apronRight = 3;
-	int apronUp = 1;
-	int apronDown = 10;
-	dim3 blockDim(4,2,1);
+	int apronLeft = 2;
+	int apronRight = 5;
+	int apronUp = 2;
+	int apronDown = 5;
+	dim3 blockDim(3,2,1);
 	dim3 gridDim(1,1,1);
-	int sx = apronLeft + apronRight + blockDim.x;
-	int sy = apronUp + apronDown + blockDim.y;
-	shKernel<<<gridDim, blockDim, sx*sy*sizeof( float ), stream>>>( d_data, w, p, h, apronLeft, apronRight, apronUp, apronDown );
+	int sx = apronLeft + apronRight + blockDim.x*nTilesX;
+	int sy = apronUp + apronDown + blockDim.y*nTilesY;
+	shKernel<<<gridDim, blockDim, sx*sy*sizeof( float ), stream>>>( d_data
+																	, w, p, h
+																	, nTilesX, nTilesY
+																	, apronLeft, apronRight, apronUp, apronDown);
 
 	free( h_data );
 	CUDA_SAFECALL( cudaFree( d_data ));
