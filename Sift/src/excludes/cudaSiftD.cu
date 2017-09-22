@@ -3,7 +3,7 @@
 
 
 
-__global__ void blurKernel(float *gDst, float *gSrc
+__global__ void blurKernel( float *gDst, float *gSrc
 						, int w, int p, int h
 						, const int nTilesX, const int nTilesY
 						, const int apronLeft, const int apronRight, const int apronUp, const int apronDown
@@ -17,13 +17,15 @@ __global__ void blurKernel(float *gDst, float *gSrc
 	int bDimY = blockDim.y;
 	int bIdxX = blockIdx.x;
 	int bIdxY = blockIdx.y;
-	int kernelOffset = 0;
+	int sx = 0;
+	int sy = 0;
 	int gx = tx + bDimX * bIdxX * nTilesX;
 	int gy = ty + bDimY * bIdxY * nTilesY;
-	int gIdx = gx + p * gy;
-	int sDimX = (apronLeft + bDimX + apronRight + bankOffset);
-	int sDimY = (apronUp + bDimY + apronDown);
-
+	int dataSizeX = nTilesX*bDimX;
+	int sDimX = (apronLeft + dataSizeX + apronRight + bankOffset);
+	int apronOld = 0;
+	int apronActive = 0;
+	int activeTiles = 0;
 	extern __shared__ float shared[];
 
 	// Load data to shared
@@ -31,12 +33,40 @@ __global__ void blurKernel(float *gDst, float *gSrc
 							, gx, gy, bDimX, bDimY, w, p, h
 							, nTilesX, nTilesY
 							, apronLeft, apronRight, apronUp, apronDown, bankOffset);
-	// Copy data to global
-	cudaMemcpySharedToGlobal(gDst, shared
-							, tx, ty, gx, gy
-							, bDimX, bDimY, w, p, h
-							, nTilesX, nTilesY
-							, apronLeft, apronRight, apronUp, apronDown, bankOffset);
+
+	// Convolve-x
+	for (int i = 0; i < N_SCALES + 3; ++i)
+	{
+		apronOld += c_GaussianBlurSize[i] - 1;
+		apronActive = apronLeft + apronRight - apronOld;
+		activeTiles = cudaIDivUpNear(dataSizeX + apronActive, bDimX);
+
+		if (gx == 0 && gy == 0){
+			printf("scale \t %d\nfilter size \t %d\n", i, c_GaussianBlurSize[i]);
+			printf("apronActive \t %d\nactiveTiles \t %d\n", apronActive, activeTiles);
+		}
+		for (int j = 0; j < activeTiles ; ++j)
+		{
+			sx = tx + j*bDimX;
+			sy = ty;
+
+			if (sx < dataSizeX + apronActive)
+			{
+				float sum = 0;
+				for (int k = 0; k < c_GaussianBlurSize[i]; ++k)
+					sum = __fmaf_rn(c_GaussianBlur[c_GaussianBlurKernelPtr[i] + k], shared[cuda2DTo1D(sx + k, sy, sDimX)], sum);
+				shared[cuda2DTo1D(sx, sy, sDimX)] = sum;
+			}
+		}
+		__syncthreads();
+
+		// Copy data to global
+		cudaMemcpySharedToGlobal(gDst, shared
+								, tx, ty, gx, gy
+								, bDimX, bDimY, w, p, h
+								, nTilesX, nTilesY
+								, apronLeft, apronRight, apronUp, apronDown, bankOffset);
+	}
 }
 
 
@@ -95,6 +125,8 @@ __global__ void shKernel(float *data
 							, bDimX, bDimY, w, p, h
 							, nTilesX, nTilesY
 							, apronLeft, apronRight, apronUp, apronDown, 0 );
+
+	__syncthreads();
 	if (gx == 0 && gy == 0)
 	{
 		for (int j = 0; j < apronUp +  bDimY*(nTilesY) + apronDown; ++j)
@@ -106,21 +138,22 @@ __global__ void shKernel(float *data
 			printf( "\n" );
 		}
 	}
+
 	cudaMemcpySharedToGlobal(data, shared
 							, tx, ty, gx, gy
 							, bDimX, bDimY, w, p, h
 							, nTilesX, nTilesY
 							, apronLeft, apronRight, apronUp, apronDown, 0);
-	if (gx == 0 && gy == 0)
-	{
-		for (int j = 0; j < h; ++j)
-		{
-			for (int i = 0; i < w; ++i)
-			{
-				printf( "%f  ", data[cuda2DTo1D( i, j, p)] );
-			}
-			printf( "\n" );
-		}
-
-	}
+//	if (gx == 0 && gy == 0)
+//	{
+//		for (int j = 0; j < h; ++j)
+//		{
+//			for (int i = 0; i < w; ++i)
+//			{
+//				printf( "%f  ", data[cuda2DTo1D( i, j, p)] );
+//			}
+//			printf( "\n" );
+//		}
+//
+//	}
 }

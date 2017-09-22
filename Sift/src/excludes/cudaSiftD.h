@@ -2,14 +2,14 @@
 #define CUDA_SIFT_D_H
 #include <stdio.h>
 // Define sift constants
-#define SIGMA 1.6f
+#define SIGMA 2.0f
 #define N_OCTAVES 4
 #define N_SCALES 2
 #define MIN_THRESH 2.0f
 #define R_THRESH 10.0f
 
 // Define kernel parameters
-#define B_KERNEL_SIZE 33
+#define B_KERNEL_SIZE 1000	// adjust according to SIGMA
 
 
 #define WIDTH_CONV_BLOCK 32
@@ -20,6 +20,7 @@
 // Constant memory variables
 __constant__ float c_GaussianBlur[B_KERNEL_SIZE];
 __constant__ int c_GaussianBlurSize[N_SCALES + 3];
+__constant__ int c_GaussianBlurKernelPtr[N_SCALES + 3];
 __constant__ int c_MaxGaussianBlurSize;
 
 // Define device free functions

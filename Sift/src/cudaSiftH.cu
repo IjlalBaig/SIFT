@@ -14,16 +14,16 @@ void blurOctave(float *dst, float *src, int width, int pitch, int height, cudaSt
 	int maxApronStart = floor( maxKernelSize / 2 );
 	int maxApronEnd =  maxKernelSize - maxApronStart - 1;
 	// Set bankOffset to 1 for even filter size
-	int bankOffset = (maxApronStart == maxApronEnd) ? (1):(0);
+	int bankOffset = 0; //(maxApronStart == maxApronEnd) ? (1):(0);
 	// Set x-convolution kernel parameters
-	int nTilesX = 11;
+	int nTilesX = 12 - iDivUp((maxApronStart + maxApronEnd), WIDTH_CONV_BLOCK) ;
 	int nTilesY = 1;
 	dim3 blockSize(WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1);
 	dim3 gridSize(iDivUp(width, WIDTH_CONV_BLOCK*nTilesX), iDivUp(height, HEIGHT_CONV_BLOCK*nTilesY), 1);
 	int sDimX = nTilesX*WIDTH_CONV_BLOCK + maxApronStart + maxApronEnd + bankOffset;
 	int sDimY = HEIGHT_CONV_BLOCK;
-
-	printf("sDimX \t%d\nsDimY \t%d\n", sDimX, sDimY);
+//	printf("sDimX \t%d\nsDimY \t%d\n", sDimX, sDimY);
+//	printf("gridSizeX \t%d\ngridSizeY \t%d\n", gridSize.x, gridSize.y);
 	blurKernel<<<gridSize, blockSize, sDimX*sDimY*sizeof(float), stream>>>(dst, src
 																		, width, pitch, height
 																		, nTilesX, nTilesY
@@ -59,11 +59,11 @@ void initDeviceConstant()
 	int blurSizeArray[N_SCALES + 3];
 
 	int kernelStartPtr = 0;
+	int kernelPtr[N_SCALES + 3];
 	float gaussianBlur[B_KERNEL_SIZE];
 	float sigma = 0.0;
 	float sigmaOld = 0.0;
 	float sigmaNew = 0.0;
-
 	for(int i = 0; i < N_SCALES + 3; ++i)
 	{
 		sigma = pow( k, i-1 ) * SIGMA;
@@ -76,11 +76,13 @@ void initDeviceConstant()
 		// Push blurSize to blurSizeArray[]
 		blurSizeArray[i] = blurSize;
 		// Increment kernelStartPtr to point on top of gaussiaBlur[] stack
+		kernelPtr[i] = kernelStartPtr;
 		kernelStartPtr += blurSize;
 		// Set maxBlurSize
 		maxBlurSize = (blurSize > maxBlurSize) ? (blurSize):(maxBlurSize);
 	}
 	// Copy symbols to constant memory
+	cudaMemcpyToSymbol( c_GaussianBlurKernelPtr, &kernelPtr, (N_SCALES + 3)*sizeof( int ) );
 	cudaMemcpyToSymbol( c_GaussianBlurSize, &blurSizeArray, (N_SCALES + 3)*sizeof( int ) );
 	cudaMemcpyToSymbol( c_MaxGaussianBlurSize, &maxBlurSize, sizeof( int ) );
 	cudaMemcpyToSymbol( c_GaussianBlur, &gaussianBlur, B_KERNEL_SIZE * sizeof( float ) );
