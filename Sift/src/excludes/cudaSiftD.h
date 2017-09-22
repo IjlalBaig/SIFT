@@ -1,6 +1,7 @@
 #ifndef CUDA_SIFT_D_H
 #define CUDA_SIFT_D_H
 #include <stdio.h>
+#include "../utils.h"
 // Define sift constants
 #define SIGMA 2.0f
 #define N_OCTAVES 4
@@ -9,7 +10,8 @@
 #define R_THRESH 10.0f
 
 // Define kernel parameters
-#define B_KERNEL_SIZE 1000	// adjust according to SIGMA
+//#define B_KERNEL_RADIUS 4
+#define B_KERNEL_SIZE  (2*B_KERNEL_RADIUS + 1)
 
 
 #define WIDTH_CONV_BLOCK 32
@@ -18,7 +20,7 @@
 
 
 // Constant memory variables
-__constant__ float c_GaussianBlur[B_KERNEL_SIZE];
+__constant__ float c_GaussianBlur[(N_SCALES + 3) * B_KERNEL_SIZE];
 __constant__ int c_GaussianBlurSize[N_SCALES + 3];
 __constant__ int c_GaussianBlurKernelPtr[N_SCALES + 3];
 __constant__ int c_MaxGaussianBlurSize;
@@ -56,7 +58,7 @@ __device__ void cudaMemcpyGlobalToShared( float *s, const float *g
 
 			if (sx >= 0 && sx < sDimX - bankOffset && sy >= 0 && sy < sDimY)
 			{
-				gx_ = gx - apronLeft + i*bDimX;
+				gx_ = gx  - apronLeft + i*bDimX;
 				gy_ = gy - apronUp + j*bDimY;
 				if(gx_ >= 0 && gx_ < w && gy_ >= 0 && gy_ < h)
 					s[cuda2DTo1D( sx, sy, sDimX)] = g[cuda2DTo1D( gx_, gy_, p )];

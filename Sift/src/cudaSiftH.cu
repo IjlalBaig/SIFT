@@ -8,13 +8,12 @@
 void blurOctave(float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream)
 {
 	float k = pow(2,0.5);
-	// Get max Kernel size
-	int maxKernelSize = imfilter::gaussianSize( pow( k, N_SCALES + 1 ) * SIGMA );
+
 	// Get max apron Size
-	int maxApronStart = floor( maxKernelSize / 2 );
-	int maxApronEnd =  maxKernelSize - maxApronStart - 1;
+	int maxApronStart = B_KERNEL_RADIUS;
+	int maxApronEnd = B_KERNEL_RADIUS;
 	// Set bankOffset to 1 for even filter size
-	int bankOffset = 0; //(maxApronStart == maxApronEnd) ? (1):(0);
+	int bankOffset = 0;
 	// Set x-convolution kernel parameters
 	int nTilesX = 12 - iDivUp((maxApronStart + maxApronEnd), WIDTH_CONV_BLOCK) ;
 	int nTilesY = 1;
@@ -22,8 +21,6 @@ void blurOctave(float *dst, float *src, int width, int pitch, int height, cudaSt
 	dim3 gridSize(iDivUp(width, WIDTH_CONV_BLOCK*nTilesX), iDivUp(height, HEIGHT_CONV_BLOCK*nTilesY), 1);
 	int sDimX = nTilesX*WIDTH_CONV_BLOCK + maxApronStart + maxApronEnd + bankOffset;
 	int sDimY = HEIGHT_CONV_BLOCK;
-//	printf("sDimX \t%d\nsDimY \t%d\n", sDimX, sDimY);
-//	printf("gridSizeX \t%d\ngridSizeY \t%d\n", gridSize.x, gridSize.y);
 	blurKernel<<<gridSize, blockSize, sDimX*sDimY*sizeof(float), stream>>>(dst, src
 																		, width, pitch, height
 																		, nTilesX, nTilesY
@@ -48,50 +45,26 @@ void blurOctave(float *dst, float *src, int width, int pitch, int height, cudaSt
 
 void initDeviceConstant()
 {
-
-
-	// Set c_GaussianBlurSize[] for each scale
-	// Set c_MaxGaussianBlurSize
 	// Set c_GaussianBlur[] kernel for each scale
 	float k = pow(2,0.5);
-	int blurSize = 0;
-	int maxBlurSize = 0;
-	int blurSizeArray[N_SCALES + 3];
-
-	int kernelStartPtr = 0;
-	int kernelPtr[N_SCALES + 3];
-	float gaussianBlur[B_KERNEL_SIZE];
-	float sigma = 0.0;
-	float sigmaOld = 0.0;
+	float gaussianBlur[(N_SCALES + 3) * B_KERNEL_SIZE];
 	float sigmaNew = 0.0;
+
 	for(int i = 0; i < N_SCALES + 3; ++i)
 	{
-		sigma = pow( k, i-1 ) * SIGMA;
-		sigmaNew  = sigma - sigmaOld;
-		sigmaOld = sigma;
+		sigmaNew = pow( k, i-1 ) * SIGMA;
+
 		// Push new kernel array to gaussiaBlur[]
-		imfilter::gaussian1D( gaussianBlur + kernelStartPtr, sigmaNew );
-		// Set blurSize to current kernel size
-		blurSize = imfilter::gaussianSize( sigmaNew );
-		// Push blurSize to blurSizeArray[]
-		blurSizeArray[i] = blurSize;
-		// Increment kernelStartPtr to point on top of gaussiaBlur[] stack
-		kernelPtr[i] = kernelStartPtr;
-		kernelStartPtr += blurSize;
-		// Set maxBlurSize
-		maxBlurSize = (blurSize > maxBlurSize) ? (blurSize):(maxBlurSize);
+		imfilter::gaussian1D( gaussianBlur + i * (2*B_KERNEL_RADIUS + 1), sigmaNew );
 	}
 	// Copy symbols to constant memory
-	cudaMemcpyToSymbol( c_GaussianBlurKernelPtr, &kernelPtr, (N_SCALES + 3)*sizeof( int ) );
-	cudaMemcpyToSymbol( c_GaussianBlurSize, &blurSizeArray, (N_SCALES + 3)*sizeof( int ) );
-	cudaMemcpyToSymbol( c_MaxGaussianBlurSize, &maxBlurSize, sizeof( int ) );
-	cudaMemcpyToSymbol( c_GaussianBlur, &gaussianBlur, B_KERNEL_SIZE * sizeof( float ) );
+	cudaMemcpyToSymbol( c_GaussianBlur, &gaussianBlur, (N_SCALES + 3) * B_KERNEL_SIZE * sizeof( float ) );
 }
 
 void testSetConstants(cudaStream_t &stream)
 {
 	kernelGaussianSize<<<1, 5, 0, stream>>>();
-	kernelGaussianVector<<<1, B_KERNEL_SIZE, 0, stream>>>();
+	kernelGaussianVector<<<1, (N_SCALES + 3) * B_KERNEL_SIZE, 0, stream>>>();
 }
 
 void testcopyKernel( cudaStream_t &stream )

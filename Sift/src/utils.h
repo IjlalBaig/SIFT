@@ -2,6 +2,7 @@
 #define UTILS_H
 
 #define PI 3.14159265
+#define B_KERNEL_RADIUS 12
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
@@ -20,7 +21,6 @@ int drawPoint( cv:: Mat &img, float x, float y, float scale, float orientation )
 namespace imfilter{
 int gaussian1D(float *kernelPtr, float sigma);
 int gaussian2D(float *kernelPtr, float sigma);
-float gaussianSize(float sigma);
 }
 
 int iDivUp( int num, int den );

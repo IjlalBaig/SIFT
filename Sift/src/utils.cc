@@ -46,26 +46,30 @@ int image::drawPoint( cv:: Mat &img, float x, float y, float scale, float orient
  *
  * Image filtering
  */
-float imfilter::gaussianSize( float sigma ){return round( 6*sigma + 1 );}
 int imfilter::gaussian1D( float *kernelPtr, float sigma )
 {
-	float kernelSize = gaussianSize( sigma );
-	float gaussianMean = ( kernelSize - 1 )/2;
-	for (int i = 0; i < kernelSize; ++i)
-		kernelPtr[i] = (1/(pow( 2.0f * PI, 0.5f ) * sigma)) * exp( -pow( i - gaussianMean, 2 )  / (2 * pow( sigma, 2 )) );
+	float sum = 0;
+	for (int i = 0; i < 2*B_KERNEL_RADIUS + 1; ++i)
+	{
+		kernelPtr[i] = (1/(pow( 2.0f * PI, 0.5f ) * sigma)) * exp( -pow( i - B_KERNEL_RADIUS, 2 )  / (2 * pow( sigma, 2 )) );
+		sum += kernelPtr[i];
+	}
+	// Normalize kernel
+	for (int i = 0; i < 2*B_KERNEL_RADIUS + 1; ++i)
+		kernelPtr[i] /= sum;
 	return 0;
 }
 int imfilter::gaussian2D( float *kernelPtr, float sigma )
 {
-	float kernelSize = gaussianSize( sigma );
-	float kernel1D[int( kernelSize )];
-	gaussian1D(kernel1D, sigma);
-	for (int j = 0; j < kernelSize; ++j)
-	{
-		for (int i = 0; i < kernelSize; ++i)
-			kernelPtr[int( kernelSize )*j + i] = kernel1D[i]*kernel1D[j];
-	}
-	return 0;
+//	float kernelSize = gaussianSize( sigma );
+//	float kernel1D[int( kernelSize )];
+//	gaussian1D(kernel1D, sigma);
+//	for (int j = 0; j < kernelSize; ++j)
+//	{
+//		for (int i = 0; i < kernelSize; ++i)
+//			kernelPtr[int( kernelSize )*j + i] = kernel1D[i]*kernel1D[j];
+//	}
+//	return 0;
 }
 /*
  *
