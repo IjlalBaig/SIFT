@@ -16,6 +16,7 @@ int sift( std::string dstPath, std::string *srcPath)
 	cv::Mat matImg[BATCH_SIZE];
 	int width[BATCH_SIZE];
 	int height[BATCH_SIZE];
+	int pitch[BATCH_SIZE];
 	for (int i = 0; i < BATCH_SIZE; ++i)
 	{
 		image::imload( matImg[i], srcPath[i], false );
@@ -36,6 +37,7 @@ int sift( std::string dstPath, std::string *srcPath)
 	{
 		cuImg[i].Allocate( width[i], height[i], NULL, (float *)matImg[i].data );
 		siftData[i].Allocate(MAX_POINTS, NULL, NULL);
+		pitch[i] = cuImg[i].pitch;
 	}
 
 	//	Create batch streams
@@ -60,7 +62,32 @@ int sift( std::string dstPath, std::string *srcPath)
 		//	Launch Kernels
 //		testcopyKernel(stream[i]);
 //		testSetConstants(stream[i]);
-		blurOctave(cuRes.d_data, cuImg[i].d_data, cuRes.width, cuRes.pitch, cuRes.height, stream[i]);
+
+		//	Allocate octave pointers
+		float *(d_srcImage[i]);
+		float *(d_multiBlur[i]);
+		float *(d_multiDoG[i]);
+		float *(d_multiHessian[i]);
+		float *(d_multiMagnitude[i]);
+		float *(d_multiDirection[i]);
+
+		for (int j = 0; j < N_OCTAVES; ++j)
+		{
+
+			allocateOctave( d_multiBlur[i], d_multiDoG[i]
+			            , d_multiHessian[i], d_multiMagnitude[i], d_multiDirection[i]
+						, width[i], pitch[i], height[i] );
+			//	Compute octave scale space
+			blurOctave( d_multiBlur[i], cuImg[i].d_data, width[i], pitch[i], height[i], stream[i] );
+
+			//	Copy data to result image
+			int gDim = cuRes.pitch*cuRes.height;
+			copyDeviceData(cuRes.d_data, 4*gDim + d_multiBlur[i], cuRes.width, cuRes.pitch, cuRes.height, stream[i] );
+			//	Free octave pointers
+			freeOctave(d_multiBlur[i], d_multiDoG[i]
+					, d_multiHessian[i], d_multiMagnitude[i], d_multiDirection[i] );
+		}
+
 	}
 
 	for (int i = 0; i < BATCH_SIZE; ++i)

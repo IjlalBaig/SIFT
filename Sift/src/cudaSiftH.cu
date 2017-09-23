@@ -3,41 +3,94 @@
 #include "utils.h"
 #include "cudaUtils.h"
 
-
-
-void blurOctave(float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream)
+void copyDeviceData( float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream )
 {
-	float k = pow(2,0.5);
+	dim3 blockSize( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
+	dim3 gridSize( iDivUp( width, WIDTH_CONV_BLOCK ), iDivUp( height, HEIGHT_CONV_BLOCK ), 1 );
+	copyKernel<<<gridSize, blockSize, 0, stream>>>( dst, src, width, pitch, height );
+}
+
+void blurOctave( float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream )
+{
+	float k = pow( 2, 0.5 );
+	int nBlurScales = N_SCALES + 3;
+	int gDim = pitch * height;
+
+	// 	Allocate tmp data pointer
+	float *tmpDst;
+	CUDA_SAFECALL( cudaMalloc( (void **) &tmpDst,(size_t)(pitch * height * nBlurScales * sizeof( float )) ) );
 
 	// Get max apron Size
 	int maxApronStart = B_KERNEL_RADIUS;
 	int maxApronEnd = B_KERNEL_RADIUS;
-	// Set bankOffset to 1 for even filter size
-	int bankOffset = 0;
+	// Set bankOffset so sDimX is odd and no bank conlicts
+	int bankOffset = 1;
 	// Set x-convolution kernel parameters
-	int nTilesX = 12 - iDivUp((maxApronStart + maxApronEnd), WIDTH_CONV_BLOCK) ;
+	int nTilesX = 11 ;//- iDivUp((maxApronStart + maxApronEnd), WIDTH_CONV_BLOCK) ;
 	int nTilesY = 1;
-	dim3 blockSize(WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1);
-	dim3 gridSize(iDivUp(width, WIDTH_CONV_BLOCK*nTilesX), iDivUp(height, HEIGHT_CONV_BLOCK*nTilesY), 1);
+	dim3 blockSizeX( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
+	dim3 gridSizeX( iDivUp( width, WIDTH_CONV_BLOCK*nTilesX ), iDivUp( height, HEIGHT_CONV_BLOCK*nTilesY ), 1 );
 	int sDimX = nTilesX*WIDTH_CONV_BLOCK + maxApronStart + maxApronEnd + bankOffset;
-	int sDimY = HEIGHT_CONV_BLOCK;
-	blurKernel<<<gridSize, blockSize, sDimX*sDimY*sizeof(float), stream>>>(dst, src
-																		, width, pitch, height
-																		, nTilesX, nTilesY
-																		, maxApronStart, maxApronEnd, 0, 0
-																		, bankOffset);
+	int sDimY = nTilesY*HEIGHT_CONV_BLOCK;
+	xblurMultiKernel<<<gridSizeX, blockSizeX, sDimX*sDimY*sizeof( float ), stream>>>( tmpDst, src
+																					, width, pitch, height
+																					, nTilesX, nTilesY
+																					, maxApronStart, maxApronEnd, 0, 0
+																					, bankOffset );
+	// Set y-convolution kernel parameters
+	nTilesX = 1;
+	nTilesY = 11;
+	dim3 blockSizeY( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
+	dim3 gridSizeY( iDivUp( width, WIDTH_CONV_BLOCK*nTilesX ), iDivUp( height, HEIGHT_CONV_BLOCK*nTilesY ), 1 );
+	sDimX = nTilesX*WIDTH_CONV_BLOCK + bankOffset;
+	sDimY = nTilesY*HEIGHT_CONV_BLOCK + maxApronStart + maxApronEnd;
+
+	for (int i = 0; i < nBlurScales; ++i)
+	{
+		yblurKernel<<<gridSizeY, blockSizeY, sDimX*sDimY*sizeof( float ), stream>>>( dst + i*gDim, tmpDst + i*gDim, i
+																					, width, pitch, height
+																					, nTilesX, nTilesY
+																					, 0, 0, maxApronStart, maxApronEnd
+																					, bankOffset );
+	}
+	// 	Free tmp data
+	CUDA_SAFECALL( cudaFree( tmpDst) );
 }
 
 
+void allocateOctave( float *&multiBlur, float *&multiDoG, float *&multiHessian
+					, float *&multiMagnitude, float *&multiDirection
+					, int w, int p, int h )
+{
+	int nBlurScales = N_SCALES + 3;
+	int nDoGScales = N_SCALES + 2;
+	CUDA_SAFECALL( cudaMalloc( (void **) &multiBlur,(size_t)(p * h * nBlurScales * sizeof( float )) ) );
+	CUDA_SAFECALL( cudaMalloc( (void **) &multiDoG,(size_t)(p * h * nDoGScales  * sizeof( float )) ) );
+	CUDA_SAFECALL( cudaMalloc( (void **) &(multiHessian),(size_t)(p * h * N_SCALES * sizeof( float )) ) );
+	CUDA_SAFECALL( cudaMalloc( (void **) &multiMagnitude,(size_t)(p * h * N_SCALES * sizeof( float )) ) );
+	CUDA_SAFECALL( cudaMalloc( (void **) &multiDirection,(size_t)(p * h * N_SCALES * sizeof( float )) ) );
 
 
+//	cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc( 32, 0, 0, 0, cudaChannelFormatKindFloat );
+//	safeCall( cudaMallocArray( &m, &channelDesc, w, h ) );
+//	safeCall( cudaMallocArray( &theta, &channelDesc, w, h ) );
+}
 
+void freeOctave( float *&multiBlur, float *&multiDoG
+				, float *&multiHessian, float *&multiMagnitude, float *&multiDirection )
+{
+//	Free device memory
+	CUDA_SAFECALL( cudaFree( multiBlur ) );
+	CUDA_SAFECALL( cudaFree( multiDoG ) );
+	CUDA_SAFECALL( cudaFree( multiHessian ) );
+	CUDA_SAFECALL( cudaFree( multiMagnitude ) );
+	CUDA_SAFECALL( cudaFree( multiDirection ) );
 
-
-
-
-
-
+//	Free texture memory
+	//safeCall( cudaDestroyTextureObject( texObj ) );
+//	safeCall( cudaFreeArray( m ) );
+//	safeCall( cudaFreeArray( theta ) );
+}
 
 
 

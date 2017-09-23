@@ -4,7 +4,6 @@
 #include "../utils.h"
 // Define sift constants
 #define SIGMA 2.0f
-#define N_OCTAVES 4
 #define N_SCALES 2
 #define MIN_THRESH 2.0f
 #define R_THRESH 10.0f
