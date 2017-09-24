@@ -69,7 +69,7 @@ int imfilter::gaussian2D( float *kernelPtr, float sigma )
 //		for (int i = 0; i < kernelSize; ++i)
 //			kernelPtr[int( kernelSize )*j + i] = kernel1D[i]*kernel1D[j];
 //	}
-//	return 0;
+	return 0;
 }
 /*
  *

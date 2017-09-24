@@ -41,7 +41,7 @@ __global__ void xblurMultiKernel( float *gDst, float *gSrc
 			sy = ty;
 			gx_ = sx + bDimX * bIdxX * nTilesX;
 
-			if (sx < dataSizeX && gx_ < w)
+			if (sx < dataSizeX && gx_ < w && gy < h)
 			{
 				float sum = 0;
 				for (int k = 0; k < B_KERNEL_SIZE; ++k)
@@ -94,7 +94,7 @@ __global__ void yblurKernel( float *gDst, float *gSrc, const int scaleIdx
 		sy = ty + i*bDimY;
 		gy_ = sy + bDimY * bIdxY * nTilesY;
 
-		if (sy < dataSizeY && gy_ < h)
+		if (sy < dataSizeY && gy_ < h && gx < w)
 		{
 				float sum = 0;
 				for (int j = 0; j < B_KERNEL_SIZE; ++j)
@@ -136,7 +136,7 @@ __global__ void resizeKernel( float *gDst, float *gSrc, int w, int p, int h )
 	{
 		int gx_ = gx / 2.0f;
 		int gy_ = gy / 2.0f;
-		int p_ = cudaIAlignUp( w/2, 128 );
+		int p_ = cudaIAlignUp( cudaIDivUpNear( w, 2 ), 128 );
 		int gIdx_ = gx_ + gy_ * p_;
 		gDst[gIdx_] = gSrc[gIdx];
 	}

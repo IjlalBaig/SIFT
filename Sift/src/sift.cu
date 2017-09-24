@@ -4,7 +4,6 @@
 #include "cudaSiftH.h"
 #include "cudaImage.h"
 
-
 int sift( std::string dstPath, std::string *srcPath)
 {
 //	cudaStream_t stream;
@@ -16,20 +15,13 @@ int sift( std::string dstPath, std::string *srcPath)
 	cv::Mat matImg[BATCH_SIZE];
 	int width[BATCH_SIZE];
 	int height[BATCH_SIZE];
-	int pitch[BATCH_SIZE];
 	for (int i = 0; i < BATCH_SIZE; ++i)
 	{
 		image::imload( matImg[i], srcPath[i], false );
 		width[i] = matImg[i].cols;
 		height[i] = matImg[i].rows;
 	}
-	/*
-	 *
-	 * clean */
-	cv::Mat1f matRes(matImg[0].rows, matImg[0].cols);
-	CudaImage cuRes;
-	cuRes.Allocate( matImg[0].cols, matImg[0].rows, NULL, (float *)matRes.data );
-	/********/
+
 	//	Allocate Cuda Objects
 	CudaImage cuImg[BATCH_SIZE];
 	SiftData siftData[BATCH_SIZE];
@@ -37,7 +29,6 @@ int sift( std::string dstPath, std::string *srcPath)
 	{
 		cuImg[i].Allocate( width[i], height[i], NULL, (float *)matImg[i].data );
 		siftData[i].Allocate(MAX_POINTS, NULL, NULL);
-		pitch[i] = cuImg[i].pitch;
 	}
 
 	//	Create batch streams
@@ -54,56 +45,41 @@ int sift( std::string dstPath, std::string *srcPath)
 		//	Upload CudaImage to GPU
 		cuImg[i].Upload(stream[i]);
 		siftData[i].Upload(stream[i]);
-		/*
-		 *
-		 * clean */
-		cuRes.Upload(stream[0]);
-		/*********/
 		//	Launch Kernels
 //		testcopyKernel(stream[i]);
 //		testSetConstants(stream[i]);
+		//	Allocate result pointer
+		int resOctave = 0;
+		int w = iDivUp( cuImg[i].width, pow(2, resOctave ) );
+		int p = iAlignUp( w, 128);
+		int h = iDivUp( cuImg[i].height, pow(2, resOctave ) );
+		float *d_res;
+		cv::Mat1f matRes(h, w);
+		CUDA_SAFECALL( cudaMalloc( (void **) &d_res,(size_t)( p*h*sizeof( float ) ) ) );
 
-		//	Allocate octave pointers
-		float *(d_srcImage[i]);
-		float *(d_multiBlur[i]);
-		float *(d_multiDoG[i]);
-		float *(d_multiHessian[i]);
-		float *(d_multiMagnitude[i]);
-		float *(d_multiDirection[i]);
+		extractSift(d_res, resOctave, cuImg[i].d_data, cuImg[i].width, cuImg[i].pitch, cuImg[i].height, 0, stream[i] );
 
-		for (int j = 0; j < N_OCTAVES; ++j)
-		{
-
-			allocateOctave( d_multiBlur[i], d_multiDoG[i]
-			            , d_multiHessian[i], d_multiMagnitude[i], d_multiDirection[i]
-						, width[i], pitch[i], height[i] );
-			//	Compute octave scale space
-			blurOctave( d_multiBlur[i], cuImg[i].d_data, width[i], pitch[i], height[i], stream[i] );
-
-			//	Copy data to result image
-			int gDim = cuRes.pitch*cuRes.height;
-			copyDeviceData(cuRes.d_data, 4*gDim + d_multiBlur[i], cuRes.width, cuRes.pitch, cuRes.height, stream[i] );
-			//	Free octave pointers
-			freeOctave(d_multiBlur[i], d_multiDoG[i]
-					, d_multiHessian[i], d_multiMagnitude[i], d_multiDirection[i] );
-		}
+		//	Copy data to result image
+		CUDA_SAFECALL( cudaMemcpy2DAsync( (void *)matRes.data, (size_t)(w*sizeof( float )), (const void *)d_res, (size_t)(p* sizeof( float )), (size_t)(w*sizeof( float )), (size_t)h, cudaMemcpyDeviceToHost, stream[i]) );
+		image::imshow( matRes );
+//			int gDim = cuRes.pitch*cuRes.height;
+//		copyDeviceData(cuRes.d_data, 4*gDim + d_multiBlur[i], cuRes.width, cuRes.pitch, cuRes.height, stream[i] );
+		//	Free pointers
+		CUDA_SAFECALL( cudaFree( d_res ) );
 
 	}
+
+
 
 	for (int i = 0; i < BATCH_SIZE; ++i)
 	{
 		//	Download results to CPU
 		cuImg[i].Readback(stream[i]);
 		siftData[i].Readback(stream[i]);
-		/*
-		 *
-		 * clean */
-		cuRes.Readback(stream[i]);
-		/**********/
 	}
 
 	//	Show result
-	image::imshow( matRes );
+//	image::imshow( matRes );
 //	image::imshow( matImg[0] );
 
 	//	Destroy cuda streams for batchSize

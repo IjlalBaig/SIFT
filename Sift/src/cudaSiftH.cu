@@ -10,6 +10,8 @@ void copyDeviceData( float *dst, float *src, int width, int pitch, int height, c
 	copyKernel<<<gridSize, blockSize, 0, stream>>>( dst, src, width, pitch, height );
 }
 
+
+
 void blurOctave( float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream )
 {
 	float k = pow( 2, 0.5 );
@@ -92,7 +94,49 @@ void freeOctave( float *&multiBlur, float *&multiDoG
 //	safeCall( cudaFreeArray( theta ) );
 }
 
+void extractSift( float *d_res, int resOctave, float *d_src, int width, int pitch, int height, int octaveIdx, cudaStream_t &stream )
+	{
+	//	Allocate octave pointers
+	float *d_multiBlur;
+	float *d_multiDoG;
+	float *d_multiHessian;
+	float *d_multiMagnitude;
+	float *d_multiDirection;
+		// 	Allocate Octave
+		allocateOctave( d_multiBlur, d_multiDoG
+		            , d_multiHessian, d_multiMagnitude, d_multiDirection
+					, width, pitch, height );
+		//	Compute octave scale space
+		blurOctave( d_multiBlur, d_src, width, pitch, height, stream );
 
+		//	Copy back result
+		if (resOctave == octaveIdx){
+			int scaleIdx = 2;
+			copyDeviceData(d_res, scaleIdx*pitch*height + d_multiBlur, width, pitch, height, stream );
+
+		}
+		//	Check if numPts == maxPts
+		octaveIdx += 1;
+		printf("w\t%d\np\t%d\nh\t%d\n\n", width, pitch, height );
+		if (octaveIdx < N_OCTAVES /*&& numPts < maxPts*/)
+		{
+			float *d_src_;
+			int width_ = iDivUp(width, 2);
+			int height_ = iDivUp(height, 2);
+			int pitch_ = iAlignUp(width_, 128);
+			CUDA_SAFECALL( cudaMalloc( (void **) &d_src_,(size_t)(pitch_ * height_ * sizeof( float )) ) );
+			//	Set resize kernel parameters
+			dim3 blockSize( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
+			dim3 gridSize( iDivUp( width, WIDTH_CONV_BLOCK ), iDivUp( height, HEIGHT_CONV_BLOCK ), 1 );
+			resizeKernel<<<gridSize, blockSize, 0, stream>>>( d_src_, d_multiBlur + N_SCALES*pitch*height, width, pitch, height );
+
+			extractSift( d_res, resOctave, d_src_, width_, pitch_, height_, octaveIdx, stream );
+			CUDA_SAFECALL( cudaFree( d_src_ ) );
+		}
+		//	Free octave
+		freeOctave(d_multiBlur, d_multiDoG, d_multiHessian, d_multiMagnitude, d_multiDirection );
+
+	}
 
 
 

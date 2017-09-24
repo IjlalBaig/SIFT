@@ -4,7 +4,6 @@
 #include "../utils.h"
 // Define sift constants
 #define SIGMA 2.0f
-#define N_SCALES 2
 #define MIN_THRESH 2.0f
 #define R_THRESH 10.0f
 
@@ -47,14 +46,15 @@ __device__ void cudaMemcpyGlobalToShared( float *s, const float *g
 	int sDimY = apronUp + bDimY*nTilesY + apronDown;
 	int apronBlocksX = cudaIDivUpNear(apronLeft, bDimX) + cudaIDivUpNear(apronRight, bDimX);
 	int apronBlocksY = cudaIDivUpNear(apronUp, bDimY) + cudaIDivUpNear(apronDown, bDimY);
+	int jLoop = nTilesY + apronBlocksY;
+	int iLoop = nTilesX + apronBlocksX;
 
-	for (int j = 0; j < nTilesY + apronBlocksY; ++j)
+	for (int j = 0; j < jLoop; ++j)
 	{
 		sy = ty + j*bDimY;
-		for (int i = 0; i < nTilesX + apronBlocksX; ++i)
+		for (int i = 0; i < iLoop; ++i)
 		{
 			sx =  tx + i*bDimX;
-
 			if (sx >= 0 && sx < sDimX - bankOffset && sy >= 0 && sy < sDimY)
 			{
 				gx_ = gx  - apronLeft + i*bDimX;

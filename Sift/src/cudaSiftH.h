@@ -15,5 +15,6 @@ void allocateOctave( float *&multiBlur, float *&multiDoG
 					, int width, int pitch, int height );
 void freeOctave( float *&multiBlur, float *&multiDoG
 				, float *&multiHessian, float *&multiMagnitude, float *&multiDirection );
+void extractSift( float *d_res, int resOctave, float *d_src, int width, int pitch, int height, int octaveIdx, cudaStream_t &stream );
 void copyDeviceData( float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream );
 #endif

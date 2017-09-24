@@ -4,6 +4,7 @@
 #define PI 3.14159265
 #define B_KERNEL_RADIUS 9
 #define N_OCTAVES 4
+#define N_SCALES 2
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
