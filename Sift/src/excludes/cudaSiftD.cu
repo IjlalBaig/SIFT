@@ -1,7 +1,81 @@
 #include "cudaSiftD.h"
 #include <stdio.h>
 
+__global__ void subtractKernel( float *gDst, float *gSrc1, float *gSrc2
+							, int w, int p, int h )
+{
+	int gx = threadIdx.x + blockDim.x * blockIdx.x;
+	int gy = threadIdx.y + blockDim.y * blockIdx.y;
+	int gIdx = gx + p * gy;
 
+	// Compute difference
+	if (gx < w && gy < h)
+		gDst[gIdx] = gSrc1[gIdx] - gSrc2[gIdx];
+}
+
+__global__ void hessianKernel( float *gDst, float *gSrc
+							, int w, int p, int h
+							, const int nTilesX, const int nTilesY
+							, const int apronLeft, const int apronRight, const int apronUp, const int apronDown
+							, const int bankOffset )
+{
+	int tx = threadIdx.x;
+	int ty = threadIdx.y;
+	int sx = 0;
+	int sy = 0;
+	int bDimX = blockDim.x;
+	int bDimY = blockDim.y;
+	int bIdxX = blockIdx.x;
+	int bIdxY = blockIdx.y;
+	int gx = tx + bDimX * bIdxX * nTilesX;
+	int gy = ty + bDimY * bIdxY * nTilesY;
+	int gx_ = 0;
+	int dataSizeX = nTilesX*bDimX;
+	int sDimX = (apronLeft + dataSizeX + apronRight + bankOffset);
+	int gDim = p*h;
+	int Dxx = 0;
+	int Dxy = 0;
+	int Dyy = 0;
+	extern __shared__ float shared[];
+
+	// Load data to shared
+	cudaMemcpyGlobalToShared( shared, gSrc, tx, ty
+							, gx, gy, bDimX, bDimY, w, p, h
+							, nTilesX, nTilesY
+							, apronLeft, apronRight, apronUp, apronDown, bankOffset );
+
+	for (int i = 0; i < nTilesX; ++i)
+	{
+		gx_ = gx + i*bDimX;
+		if (gx_ < w && gy < h)
+		{
+			sx = apronLeft + tx + i*bDimX;
+			sy = apronUp + ty;
+
+			//	Compute Dxx
+			Dxx = -2*shared[cuda2DTo1D( sx, sy, sDimX )];
+			Dxx += shared[cuda2DTo1D( sx - 1, sy, sDimX )];
+			Dxx += shared[cuda2DTo1D( sx + 1, sy, sDimX )];
+
+			//	Compute Dyy
+			Dyy = -2*shared[cuda2DTo1D( sx, sy, sDimX )];
+			Dyy += shared[cuda2DTo1D( sx, sy - 1, sDimX )];
+			Dyy += shared[cuda2DTo1D( sx, sy + 1, sDimX )];
+
+			//	Compute Dxy
+			Dxy = shared[cuda2DTo1D( sx, sy, sDimX )];
+			Dxy += shared[cuda2DTo1D( sx - 1, sy - 1, sDimX )];
+			Dxy -= shared[cuda2DTo1D( sx - 1, sy, sDimX )];
+			Dxy -= shared[cuda2DTo1D( sx, sy - 1, sDimX )];
+
+			// Copy data to global
+			gDst[cuda2DTo1D( gx_, gy, p )] = Dxx;
+			gDst[cuda2DTo1D( gx_, gy, p ) + gDim] = Dyy;
+			gDst[cuda2DTo1D( gx_, gy, p ) + 2*gDim] = Dxy;
+		}
+	}
+
+}
 
 __global__ void xblurMultiKernel( float *gDst, float *gSrc
 								, int w, int p, int h

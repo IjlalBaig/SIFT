@@ -10,6 +10,41 @@ void copyDeviceData( float *dst, float *src, int width, int pitch, int height, c
 	copyKernel<<<gridSize, blockSize, 0, stream>>>( dst, src, width, pitch, height );
 }
 
+void computeDiffOfGauss(float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream )
+{
+
+	// Set DoG kernel parameters
+	dim3 blockSize(WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
+	dim3 gridSize( iDivUp( width, WIDTH_CONV_BLOCK ), iDivUp( height, HEIGHT_CONV_BLOCK ), 1 );
+	int gDim = pitch*height;
+
+	//	Launch subtract kernel
+		for (int i = 0; i < N_SCALES + 2; ++i)
+			subtractKernel<<<gridSize, blockSize>>>(dst + i*gDim, src + i*gDim, src + (i + 1)*gDim, width, pitch, height);
+}
+
+void computeHessian ( float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream )
+{
+	// Get max apron Size
+	int maxApron = 1;
+	// Set bankOffset so sDimX is odd and no bank conlicts
+	int bankOffset = 1;
+	// Set hessian kernel parameters
+	int nTilesX = 11 ;
+	int nTilesY = 1;
+	dim3 blockSizeX( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
+	dim3 gridSizeX( iDivUp( width, WIDTH_CONV_BLOCK*nTilesX ), iDivUp( height, HEIGHT_CONV_BLOCK*nTilesY ), 1 );
+	int sDimX = nTilesX*WIDTH_CONV_BLOCK + 2*maxApron + bankOffset;
+	int sDimY = nTilesY*HEIGHT_CONV_BLOCK + 2*maxApron;
+	int gDim = pitch*height;
+	int nDifferentials = 3;;
+	for (int i = 0; i < N_SCALES; ++i)
+		hessianKernel<<<gridSizeX, blockSizeX, sDimX*sDimY*sizeof( float ), stream>>>( dst + i*gDim*nDifferentials, src + (i + 1)*gDim
+																					, width, pitch, height
+																					, nTilesX, nTilesY
+																					, maxApron, maxApron, maxApron, maxApron
+																					, bankOffset );
+}
 
 
 void blurOctave( float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream )
@@ -60,8 +95,8 @@ void blurOctave( float *dst, float *src, int width, int pitch, int height, cudaS
 }
 
 
-void allocateOctave( float *&multiBlur, float *&multiDoG, float *&multiHessian
-					, float *&multiMagnitude, float *&multiDirection
+void allocateOctave( float *&multiBlur, float *&multiDoG
+					, float *&multiHessian, float *&multiGradient
 					, int w, int p, int h )
 {
 	int nBlurScales = N_SCALES + 3;
@@ -69,8 +104,7 @@ void allocateOctave( float *&multiBlur, float *&multiDoG, float *&multiHessian
 	CUDA_SAFECALL( cudaMalloc( (void **) &multiBlur,(size_t)(p * h * nBlurScales * sizeof( float )) ) );
 	CUDA_SAFECALL( cudaMalloc( (void **) &multiDoG,(size_t)(p * h * nDoGScales  * sizeof( float )) ) );
 	CUDA_SAFECALL( cudaMalloc( (void **) &(multiHessian),(size_t)(p * h * N_SCALES * sizeof( float )) ) );
-	CUDA_SAFECALL( cudaMalloc( (void **) &multiMagnitude,(size_t)(p * h * N_SCALES * sizeof( float )) ) );
-	CUDA_SAFECALL( cudaMalloc( (void **) &multiDirection,(size_t)(p * h * N_SCALES * sizeof( float )) ) );
+	CUDA_SAFECALL( cudaMalloc( (void **) &multiGradient,(size_t)(p * h * 2 *N_SCALES * sizeof( float )) ) );
 
 
 //	cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc( 32, 0, 0, 0, cudaChannelFormatKindFloat );
@@ -79,14 +113,13 @@ void allocateOctave( float *&multiBlur, float *&multiDoG, float *&multiHessian
 }
 
 void freeOctave( float *&multiBlur, float *&multiDoG
-				, float *&multiHessian, float *&multiMagnitude, float *&multiDirection )
+				, float *&multiHessian, float *&multiGradient )
 {
 //	Free device memory
 	CUDA_SAFECALL( cudaFree( multiBlur ) );
 	CUDA_SAFECALL( cudaFree( multiDoG ) );
 	CUDA_SAFECALL( cudaFree( multiHessian ) );
-	CUDA_SAFECALL( cudaFree( multiMagnitude ) );
-	CUDA_SAFECALL( cudaFree( multiDirection ) );
+	CUDA_SAFECALL( cudaFree( multiGradient ) );
 
 //	Free texture memory
 	//safeCall( cudaDestroyTextureObject( texObj ) );
@@ -100,24 +133,29 @@ void extractSift( float *d_res, int resOctave, float *d_src, int width, int pitc
 	float *d_multiBlur;
 	float *d_multiDoG;
 	float *d_multiHessian;
-	float *d_multiMagnitude;
-	float *d_multiDirection;
+	float *d_multiGradient;
+//	float *d_multiDirection;
 		// 	Allocate Octave
 		allocateOctave( d_multiBlur, d_multiDoG
-		            , d_multiHessian, d_multiMagnitude, d_multiDirection
+		            , d_multiHessian, d_multiGradient
 					, width, pitch, height );
 		//	Compute octave scale space
 		blurOctave( d_multiBlur, d_src, width, pitch, height, stream );
 
+		//	Compute difference of gaussian
+		computeDiffOfGauss( d_multiDoG, d_multiBlur, width, pitch, height, stream );
+
+		//	Compute octave hessian
+		computeHessian ( d_multiHessian, d_multiBlur, width, pitch, height, stream );
+
 		//	Copy back result
 		if (resOctave == octaveIdx){
-			int scaleIdx = 2;
-			copyDeviceData(d_res, scaleIdx*pitch*height + d_multiBlur, width, pitch, height, stream );
+			int scaleIdx = 1;
+			copyDeviceData(d_res, scaleIdx*pitch*height + d_multiDoG, width, pitch, height, stream );
 
 		}
 		//	Check if numPts == maxPts
 		octaveIdx += 1;
-		printf("w\t%d\np\t%d\nh\t%d\n\n", width, pitch, height );
 		if (octaveIdx < N_OCTAVES /*&& numPts < maxPts*/)
 		{
 			float *d_src_;
@@ -134,7 +172,7 @@ void extractSift( float *d_res, int resOctave, float *d_src, int width, int pitc
 			CUDA_SAFECALL( cudaFree( d_src_ ) );
 		}
 		//	Free octave
-		freeOctave(d_multiBlur, d_multiDoG, d_multiHessian, d_multiMagnitude, d_multiDirection );
+		freeOctave(d_multiBlur, d_multiDoG, d_multiHessian, d_multiGradient );
 
 	}
 
