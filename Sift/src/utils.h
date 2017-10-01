@@ -5,6 +5,11 @@
 #define B_KERNEL_RADIUS 9
 #define N_OCTAVES 4
 #define N_SCALES 2
+#define BATCH_SIZE 1
+#define MAX_POINTCOUNT 1500
+
+#define EXTREMA_THRESH 5.0f
+#define R_THRESH 10.0f
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>

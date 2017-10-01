@@ -19,9 +19,15 @@
 
 // Constant memory variables
 __constant__ float c_GaussianBlur[(N_SCALES + 3) * B_KERNEL_SIZE];
-__constant__ int c_GaussianBlurSize[N_SCALES + 3];
-__constant__ int c_GaussianBlurKernelPtr[N_SCALES + 3];
-__constant__ int c_MaxGaussianBlurSize;
+__constant__ float c_EdgeThreshold;
+__constant__ float c_ExtremaThreshold;
+__constant__ unsigned int c_MaxPointCount;
+//__constant__ int c_GaussianBlurSize[N_SCALES + 3];
+//__constant__ int c_GaussianBlurKernelPtr[N_SCALES + 3];
+//__constant__ int c_MaxGaussianBlurSize;
+
+// static memory variables
+__device__ unsigned int d_PointCounter[BATCH_SIZE];
 
 // Define device free functions
 __device__ int cudaIDivUpOdd( int num, int den )

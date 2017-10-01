@@ -28,7 +28,7 @@ int sift( std::string dstPath, std::string *srcPath)
 	for (int i = 0; i < BATCH_SIZE; ++i)
 	{
 		cuImg[i].Allocate( width[i], height[i], NULL, (float *)matImg[i].data );
-		siftData[i].Allocate(MAX_POINTS, NULL, NULL);
+		siftData[i].Allocate(MAX_POINTCOUNT, NULL, NULL);
 	}
 
 	//	Create batch streams
@@ -37,7 +37,10 @@ int sift( std::string dstPath, std::string *srcPath)
 		CUDA_SAFECALL( cudaStreamCreate( &stream[i] ) );
 
 	// 	Set device constants
-		initDeviceConstant();
+	initDeviceConstant();
+
+	//	Set device variables
+	initDeviceVariables();
 
 	//	Execute sift on streams
 	for (int i = 0; i < BATCH_SIZE; ++i)
@@ -57,7 +60,7 @@ int sift( std::string dstPath, std::string *srcPath)
 		cv::Mat1f matRes(h, w);
 		CUDA_SAFECALL( cudaMalloc( (void **) &d_res,(size_t)( p*h*sizeof( float ) ) ) );
 
-		extractSift(d_res, resOctave, cuImg[i].d_data, cuImg[i].width, cuImg[i].pitch, cuImg[i].height, 0, stream[i] );
+		extractSift(d_res, resOctave, cuImg[i].d_data, cuImg[i].width, cuImg[i].pitch, cuImg[i].height, 0, stream[i], i );
 
 		//	Copy data to result image
 		CUDA_SAFECALL( cudaMemcpy2DAsync( (void *)matRes.data, (size_t)(w*sizeof( float )), (const void *)d_res, (size_t)(p* sizeof( float )), (size_t)(w*sizeof( float )), (size_t)h, cudaMemcpyDeviceToHost, stream[i]) );

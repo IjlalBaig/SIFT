@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include "utils.h"
 #include "cudaUtils.h"
+#include "sift.h"
 
 void copyDeviceData( float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream )
 {
@@ -10,7 +11,23 @@ void copyDeviceData( float *dst, float *src, int width, int pitch, int height, c
 	copyKernel<<<gridSize, blockSize, 0, stream>>>( dst, src, width, pitch, height );
 }
 
-void computeDiffOfGauss(float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream )
+void computeExtrema()
+{
+//	// Get max apron Size
+//	int maxApron = 1;
+//	// Set bankOffset so sDimX is odd and no bank conlicts
+//	int bankOffset = 1;
+//	// Set hessian kernel parameters
+//	int nTilesX = 11 ;
+//	int nTilesY = 1;
+//	dim3 blockSize( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
+//	dim3 gridSize( iDivUp( width, WIDTH_CONV_BLOCK*nTilesX ), iDivUp( height, HEIGHT_CONV_BLOCK*nTilesY ), 1 );
+//	int sDimX = nTilesX*WIDTH_CONV_BLOCK + 2*maxApron + bankOffset;
+//	int sDimY = nTilesY*HEIGHT_CONV_BLOCK + 2*maxApron;
+//	int gDim = pitch*height;
+}
+
+void computeDiffOfGauss( float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream )
 {
 
 	// Set DoG kernel parameters
@@ -23,7 +40,30 @@ void computeDiffOfGauss(float *dst, float *src, int width, int pitch, int height
 			subtractKernel<<<gridSize, blockSize>>>(dst + i*gDim, src + i*gDim, src + (i + 1)*gDim, width, pitch, height);
 }
 
-void computeHessian ( float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream )
+void computeGradient( float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream )
+{
+	// Get max apron Size
+	int maxApron = 1;
+	// Set bankOffset so sDimX is odd and no bank conlicts
+	int bankOffset = 3;
+	// Set hessian kernel parameters
+	int nTilesX = 11 ;
+	int nTilesY = 1;
+	dim3 blockSize( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
+	dim3 gridSize( iDivUp( width, WIDTH_CONV_BLOCK*nTilesX ), iDivUp( height, HEIGHT_CONV_BLOCK*nTilesY ), 1 );
+	int sDimX = nTilesX*WIDTH_CONV_BLOCK + 2*maxApron + bankOffset;
+	int sDimY = nTilesY*HEIGHT_CONV_BLOCK + 2*maxApron;
+	int gDim = pitch*height;
+	int nUnitsPerGradient = 2;
+	for (int i = 0; i < N_SCALES; ++i)
+		gradientKernel<<<gridSize, blockSize, sDimX*sDimY*sizeof( float ), stream>>>( dst + i*gDim*nUnitsPerGradient, src + (i + 1)*gDim
+																					, width, pitch, height
+																					, nTilesX, nTilesY
+																					, maxApron, maxApron, maxApron, maxApron
+																					, bankOffset );
+}
+
+void computeHessian( float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream )
 {
 	// Get max apron Size
 	int maxApron = 1;
@@ -32,14 +72,14 @@ void computeHessian ( float *dst, float *src, int width, int pitch, int height, 
 	// Set hessian kernel parameters
 	int nTilesX = 11 ;
 	int nTilesY = 1;
-	dim3 blockSizeX( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
-	dim3 gridSizeX( iDivUp( width, WIDTH_CONV_BLOCK*nTilesX ), iDivUp( height, HEIGHT_CONV_BLOCK*nTilesY ), 1 );
+	dim3 blockSize( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
+	dim3 gridSize( iDivUp( width, WIDTH_CONV_BLOCK*nTilesX ), iDivUp( height, HEIGHT_CONV_BLOCK*nTilesY ), 1 );
 	int sDimX = nTilesX*WIDTH_CONV_BLOCK + 2*maxApron + bankOffset;
 	int sDimY = nTilesY*HEIGHT_CONV_BLOCK + 2*maxApron;
 	int gDim = pitch*height;
-	int nDifferentials = 3;;
+	int nUnitsPerHessian = 3;
 	for (int i = 0; i < N_SCALES; ++i)
-		hessianKernel<<<gridSizeX, blockSizeX, sDimX*sDimY*sizeof( float ), stream>>>( dst + i*gDim*nDifferentials, src + (i + 1)*gDim
+		hessianKernel<<<gridSize, blockSize, sDimX*sDimY*sizeof( float ), stream>>>( dst + i*gDim*nUnitsPerHessian, src + (i + 1)*gDim
 																					, width, pitch, height
 																					, nTilesX, nTilesY
 																					, maxApron, maxApron, maxApron, maxApron
@@ -127,17 +167,27 @@ void freeOctave( float *&multiBlur, float *&multiDoG
 //	safeCall( cudaFreeArray( theta ) );
 }
 
-void extractSift( float *d_res, int resOctave, float *d_src, int width, int pitch, int height, int octaveIdx, cudaStream_t &stream )
+int getPointCount(int streamIdx)
+{
+	int h_pointCounter[BATCH_SIZE];
+	CUDA_SAFECALL( cudaMemcpyFromSymbol( &h_pointCounter, d_PointCounter, sizeof( int ) ) );
+	return h_pointCounter[streamIdx];
+}
+
+void extractSift( float *d_res, int resOctave, float *d_src, int width, int pitch, int height, int octaveIdx, cudaStream_t &stream, int streamIdx )
+{
+	int ptCount = getPointCount(streamIdx);
+	if (ptCount < MAX_POINTCOUNT)
 	{
-	//	Allocate octave pointers
-	float *d_multiBlur;
-	float *d_multiDoG;
-	float *d_multiHessian;
-	float *d_multiGradient;
-//	float *d_multiDirection;
+		//	Allocate octave pointers
+		float *d_multiBlur;
+		float *d_multiDoG;
+		float *d_multiHessian;
+		float *d_multiGradient;
+
 		// 	Allocate Octave
 		allocateOctave( d_multiBlur, d_multiDoG
-		            , d_multiHessian, d_multiGradient
+					, d_multiHessian, d_multiGradient
 					, width, pitch, height );
 		//	Compute octave scale space
 		blurOctave( d_multiBlur, d_src, width, pitch, height, stream );
@@ -146,13 +196,16 @@ void extractSift( float *d_res, int resOctave, float *d_src, int width, int pitc
 		computeDiffOfGauss( d_multiDoG, d_multiBlur, width, pitch, height, stream );
 
 		//	Compute octave hessian
-		computeHessian ( d_multiHessian, d_multiBlur, width, pitch, height, stream );
+		computeHessian( d_multiHessian, d_multiBlur, width, pitch, height, stream );
+
+		//	Compute octave gradient
+		computeGradient( d_multiGradient, d_multiBlur, width, pitch, height, stream );
 
 		//	Copy back result
-		if (resOctave == octaveIdx){
-			int scaleIdx = 1;
-			copyDeviceData(d_res, scaleIdx*pitch*height + d_multiDoG, width, pitch, height, stream );
-
+		if (resOctave == octaveIdx)
+		{
+			int scaleIdx = 0;
+			copyDeviceData(d_res, scaleIdx*pitch*height + d_multiGradient, width, pitch, height, stream );
 		}
 		//	Check if numPts == maxPts
 		octaveIdx += 1;
@@ -163,24 +216,33 @@ void extractSift( float *d_res, int resOctave, float *d_src, int width, int pitc
 			int height_ = iDivUp(height, 2);
 			int pitch_ = iAlignUp(width_, 128);
 			CUDA_SAFECALL( cudaMalloc( (void **) &d_src_,(size_t)(pitch_ * height_ * sizeof( float )) ) );
+
 			//	Set resize kernel parameters
 			dim3 blockSize( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
 			dim3 gridSize( iDivUp( width, WIDTH_CONV_BLOCK ), iDivUp( height, HEIGHT_CONV_BLOCK ), 1 );
 			resizeKernel<<<gridSize, blockSize, 0, stream>>>( d_src_, d_multiBlur + N_SCALES*pitch*height, width, pitch, height );
 
-			extractSift( d_res, resOctave, d_src_, width_, pitch_, height_, octaveIdx, stream );
+			extractSift( d_res, resOctave, d_src_, width_, pitch_, height_, octaveIdx, stream, streamIdx );
 			CUDA_SAFECALL( cudaFree( d_src_ ) );
 		}
 		//	Free octave
 		freeOctave(d_multiBlur, d_multiDoG, d_multiHessian, d_multiGradient );
-
 	}
+}
 
 
+void initDeviceVariables()
+{
+	//	Allocate d_PointCounter Variables
+	int h_pointCounter[BATCH_SIZE];
+	for (int i = 0; i < BATCH_SIZE; ++i)
+		h_pointCounter[i] = 0;
+	CUDA_SAFECALL( cudaMemcpyToSymbol( d_PointCounter, &h_pointCounter, BATCH_SIZE*sizeof( int ) ) );
+}
 
 void initDeviceConstant()
 {
-	// Set c_GaussianBlur[] kernel for each scale
+	// 	Set c_GaussianBlur[] kernel for each scale
 	float k = pow(2,0.5);
 	float gaussianBlur[(N_SCALES + 3) * B_KERNEL_SIZE];
 	float sigmaNew = 0.0;
@@ -189,18 +251,27 @@ void initDeviceConstant()
 	{
 		sigmaNew = pow( k, i-1 ) * SIGMA;
 
-		// Push new kernel array to gaussiaBlur[]
+		// 	Push new kernel array to gaussiaBlur[]
 		imfilter::gaussian1D( gaussianBlur + i * (2*B_KERNEL_RADIUS + 1), sigmaNew );
 	}
-	// Copy symbols to constant memory
-	cudaMemcpyToSymbol( c_GaussianBlur, &gaussianBlur, (N_SCALES + 3) * B_KERNEL_SIZE * sizeof( float ) );
+	// 	Copy gaussian kernel to constant memory
+	CUDA_SAFECALL( cudaMemcpyToSymbol( c_GaussianBlur, &gaussianBlur, (N_SCALES + 3) * B_KERNEL_SIZE * sizeof( float ) ) );
+
+	//	Copy extrema threshold to constant memory
+	float extremaThreshold = EXTREMA_THRESH;
+	CUDA_SAFECALL( cudaMemcpyToSymbol( c_ExtremaThreshold, &extremaThreshold, sizeof( float ) ) );
+
+	//	Copy eigenvalue ratio threshold to constant memory
+	float eigenRatio = pow( R_THRESH + 1, 2 ) / 2;
+	CUDA_SAFECALL( cudaMemcpyToSymbol( c_EdgeThreshold, &eigenRatio, sizeof( float ) ) );
+
 }
 
-void testSetConstants(cudaStream_t &stream)
-{
-	kernelGaussianSize<<<1, 5, 0, stream>>>();
-	kernelGaussianVector<<<1, (N_SCALES + 3) * B_KERNEL_SIZE, 0, stream>>>();
-}
+//void testSetConstants(cudaStream_t &stream)
+//{
+//	kernelGaussianSize<<<1, 5, 0, stream>>>();
+//	kernelGaussianVector<<<1, (N_SCALES + 3) * B_KERNEL_SIZE, 0, stream>>>();
+//}
 
 void testcopyKernel( cudaStream_t &stream )
 {

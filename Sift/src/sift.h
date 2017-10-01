@@ -4,10 +4,6 @@
 #include <string>
 #include <cuda_runtime.h>
 
-#define BATCH_SIZE 1
-#define MAX_POINTS 1500
-
-
 typedef struct {
   float xpos;
   float ypos;

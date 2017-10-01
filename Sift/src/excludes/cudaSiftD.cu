@@ -13,6 +13,66 @@ __global__ void subtractKernel( float *gDst, float *gSrc1, float *gSrc2
 		gDst[gIdx] = gSrc1[gIdx] - gSrc2[gIdx];
 }
 
+__global__ void gradientKernel( float *gDst, float *gSrc
+							, int w, int p, int h
+							, const int nTilesX, const int nTilesY
+							, const int apronLeft, const int apronRight, const int apronUp, const int apronDown
+							, const int bankOffset )
+{
+	int tx = threadIdx.x;
+	int ty = threadIdx.y;
+	int sx = 0;
+	int sy = 0;
+	int bDimX = blockDim.x;
+	int bDimY = blockDim.y;
+	int bIdxX = blockIdx.x;
+	int bIdxY = blockIdx.y;
+	int gx = tx + bDimX * bIdxX * nTilesX;
+	int gy = ty + bDimY * bIdxY * nTilesY;
+	int gx_ = 0;
+	int dataSizeX = nTilesX*bDimX;
+	int sDimX = (apronLeft + dataSizeX + apronRight + bankOffset);
+	int gDim = p*h;
+	float magnitude = 0.0;
+	float direction = 0.0;
+	float lUp = 0.0;
+	float lDown = 0.0;
+	float lLeft = 0.0;
+	float lRight = 0.0;
+	extern __shared__ float shared[];
+
+	// Load data to shared
+	cudaMemcpyGlobalToShared( shared, gSrc, tx, ty
+							, gx, gy, bDimX, bDimY, w, p, h
+							, nTilesX, nTilesY
+							, apronLeft, apronRight, apronUp, apronDown, bankOffset );
+
+	for (int i = 0; i < nTilesX; ++i)
+	{
+		gx_ = gx + i*bDimX;
+		if (gx_ < w && gy < h)
+		{
+			sx = apronLeft + tx + i*bDimX;
+			sy = apronUp + ty;
+
+			//	Gather neighbor pixels
+			lUp = shared[cuda2DTo1D( sx, sy - 1, sDimX )];
+			lDown = shared[cuda2DTo1D( sx, sy + 1, sDimX )];
+			lLeft = shared[cuda2DTo1D( sx - 1, sy, sDimX )];
+			lRight = shared[cuda2DTo1D( sx + 1, sy, sDimX )];
+
+			//	Compute magnitude + direction
+			magnitude = sqrtf(powf( lRight - lLeft, 2 ) + powf( lDown - lUp, 2 ));
+			direction = (180/PI) * atan2( lDown - lUp, lRight - lLeft );
+
+			// Copy data to global
+			gDst[cuda2DTo1D( gx_, gy, p )] = magnitude;
+			gDst[cuda2DTo1D( gx_, gy, p ) + gDim] = direction;
+		}
+	}
+
+}
+
 __global__ void hessianKernel( float *gDst, float *gSrc
 							, int w, int p, int h
 							, const int nTilesX, const int nTilesY
@@ -33,9 +93,9 @@ __global__ void hessianKernel( float *gDst, float *gSrc
 	int dataSizeX = nTilesX*bDimX;
 	int sDimX = (apronLeft + dataSizeX + apronRight + bankOffset);
 	int gDim = p*h;
-	int Dxx = 0;
-	int Dxy = 0;
-	int Dyy = 0;
+	float Dxx = 0;
+	float Dxy = 0;
+	float Dyy = 0;
 	extern __shared__ float shared[];
 
 	// Load data to shared
@@ -217,13 +277,13 @@ __global__ void resizeKernel( float *gDst, float *gSrc, int w, int p, int h )
 }
 
 
-__global__ void kernelGaussianSize()
-{
-	int tx = threadIdx.x;
-	printf( "scale %d\t:\t%d\n", tx, c_GaussianBlurSize[tx] );
-	if (tx == 0)
-		printf( "%d\n", c_MaxGaussianBlurSize );
-}
+//__global__ void kernelGaussianSize()
+//{
+//	int tx = threadIdx.x;
+//	printf( "scale %d\t:\t%d\n", tx, c_GaussianBlurSize[tx] );
+//	if (tx == 0)
+//		printf( "%d\n", c_MaxGaussianBlurSize );
+//}
 
 __global__ void kernelGaussianVector()
 {
