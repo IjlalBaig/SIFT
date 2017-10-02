@@ -27,6 +27,31 @@ void computeExtrema()
 //	int gDim = pitch*height;
 }
 
+void findExtrema( SiftPoint *pt, float *src_DoG, float *src_Hessian, int width, int pitch, int height, cudaStream_t &stream )
+{
+	// Get max apron Size
+	int maxApron = 1;
+	// Set bankOffset so sDimX is odd and no bank conlicts
+	int bankOffset = 3;
+	// Set hessian kernel parameters
+	int nTilesX = 3;
+	int nTilesY = 1;
+	int nScales = 3;
+	dim3 blockSize( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
+	dim3 gridSize( iDivUp( width, WIDTH_CONV_BLOCK*nTilesX ), iDivUp( height, HEIGHT_CONV_BLOCK*nTilesY ), 1 );
+	int sDimX = nScales*nTilesX*WIDTH_CONV_BLOCK + 2*maxApron + bankOffset;
+	int sDimY = nTilesY*HEIGHT_CONV_BLOCK + 2*maxApron;
+	int gDim = pitch*height;
+	int nUnitsPerHessian = 3;
+	for (int i = 0; i < N_SCALES; ++i)
+			findExtremaKernel<<<gridSize, blockSize, sDimX*sDimY*sizeof( float ), stream>>>( pt, src_DoG + i*gDim, src_Hessian + i*nUnitsPerHessian*gDim
+																						, width, pitch, height
+																						, nTilesX, nTilesY
+																						, maxApron, maxApron, maxApron, maxApron
+																						, bankOffset, i );
+
+}
+
 void computeDiffOfGauss( float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream )
 {
 
@@ -141,10 +166,11 @@ void allocateOctave( float *&multiBlur, float *&multiDoG
 {
 	int nBlurScales = N_SCALES + 3;
 	int nDoGScales = N_SCALES + 2;
+	int nUnitsPerHessian = 3;
 	CUDA_SAFECALL( cudaMalloc( (void **) &multiBlur,(size_t)(p * h * nBlurScales * sizeof( float )) ) );
 	CUDA_SAFECALL( cudaMalloc( (void **) &multiDoG,(size_t)(p * h * nDoGScales  * sizeof( float )) ) );
-	CUDA_SAFECALL( cudaMalloc( (void **) &(multiHessian),(size_t)(p * h * N_SCALES * sizeof( float )) ) );
-	CUDA_SAFECALL( cudaMalloc( (void **) &multiGradient,(size_t)(p * h * 2 *N_SCALES * sizeof( float )) ) );
+	CUDA_SAFECALL( cudaMalloc( (void **) &(multiHessian),(size_t)(p * h * nUnitsPerHessian * N_SCALES * sizeof( float )) ) );
+	CUDA_SAFECALL( cudaMalloc( (void **) &multiGradient,(size_t)(p * h * 2 * N_SCALES * sizeof( float )) ) );
 
 
 //	cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc( 32, 0, 0, 0, cudaChannelFormatKindFloat );
@@ -174,9 +200,10 @@ int getPointCount(int streamIdx)
 	return h_pointCounter[streamIdx];
 }
 
-void extractSift( float *d_res, int resOctave, float *d_src, int width, int pitch, int height, int octaveIdx, cudaStream_t &stream, int streamIdx )
+void extractSift(SiftPoint *siftPt, float *d_res, int resOctave, float *d_src, int width, int pitch, int height, int octaveIdx, cudaStream_t &stream, int streamIdx )
 {
 	int ptCount = getPointCount(streamIdx);
+	printf("%d\n", ptCount);
 	if (ptCount < MAX_POINTCOUNT)
 	{
 		//	Allocate octave pointers
@@ -201,6 +228,8 @@ void extractSift( float *d_res, int resOctave, float *d_src, int width, int pitc
 		//	Compute octave gradient
 		computeGradient( d_multiGradient, d_multiBlur, width, pitch, height, stream );
 
+		//	Find extrema points
+		findExtrema( siftPt, d_multiDoG, d_multiHessian, width, pitch, height, stream );
 		//	Copy back result
 		if (resOctave == octaveIdx)
 		{
@@ -222,7 +251,7 @@ void extractSift( float *d_res, int resOctave, float *d_src, int width, int pitc
 			dim3 gridSize( iDivUp( width, WIDTH_CONV_BLOCK ), iDivUp( height, HEIGHT_CONV_BLOCK ), 1 );
 			resizeKernel<<<gridSize, blockSize, 0, stream>>>( d_src_, d_multiBlur + N_SCALES*pitch*height, width, pitch, height );
 
-			extractSift( d_res, resOctave, d_src_, width_, pitch_, height_, octaveIdx, stream, streamIdx );
+			extractSift( siftPt, d_res, resOctave, d_src_, width_, pitch_, height_, octaveIdx, stream, streamIdx );
 			CUDA_SAFECALL( cudaFree( d_src_ ) );
 		}
 		//	Free octave
@@ -264,6 +293,10 @@ void initDeviceConstant()
 	//	Copy eigenvalue ratio threshold to constant memory
 	float eigenRatio = pow( R_THRESH + 1, 2 ) / 2;
 	CUDA_SAFECALL( cudaMemcpyToSymbol( c_EdgeThreshold, &eigenRatio, sizeof( float ) ) );
+
+	//	Copy max point count to constant memory
+	unsigned int maxPointCount = MAX_POINTCOUNT;
+	CUDA_SAFECALL( cudaMemcpyToSymbol( c_MaxPointCount, &maxPointCount, sizeof( unsigned int ) ) );
 
 }
 

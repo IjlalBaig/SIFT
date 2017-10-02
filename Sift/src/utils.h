@@ -8,7 +8,7 @@
 #define BATCH_SIZE 1
 #define MAX_POINTCOUNT 1500
 
-#define EXTREMA_THRESH 5.0f
+#define EXTREMA_THRESH 10.0f
 #define R_THRESH 10.0f
 
 #include <opencv2/core/core.hpp>

@@ -1,4 +1,5 @@
 #include "cudaSiftD.h"
+#include "../sift.h"
 #include <stdio.h>
 
 __global__ void subtractKernel( float *gDst, float *gSrc1, float *gSrc2
@@ -13,6 +14,89 @@ __global__ void subtractKernel( float *gDst, float *gSrc1, float *gSrc2
 		gDst[gIdx] = gSrc1[gIdx] - gSrc2[gIdx];
 }
 
+__global__ void findExtremaKernel( SiftPoint *pt, float *gDoG, float *gHessian
+								, int w, int p, int h
+								, const int nTilesX, const int nTilesY
+								, const int apronLeft, const int apronRight, const int apronUp, const int apronDown
+								, const int bankOffset, const int scaleIdx )
+{
+	int tx = threadIdx.x;
+	int ty = threadIdx.y;
+	int sx = 0;
+	int sy = 0;
+	int bDimX = blockDim.x;
+	int bDimY = blockDim.y;
+	int bIdxX = blockIdx.x;
+	int bIdxY = blockIdx.y;
+	int gx = tx + bDimX * bIdxX * nTilesX;
+	int gx_ = 0;
+	int gy = ty + bDimY * bIdxY * nTilesY;
+	int gIdx = 0;
+	int dataSizeX = nTilesX*bDimX;
+	int dataSizeY = nTilesY*bDimY;
+	int sDimX = (apronLeft + dataSizeX + apronRight + bankOffset);
+	int gDim = p*h;
+	extern __shared__ float shared[];
+	float *sharedScale0 = shared;
+	float *sharedScale1 = shared + dataSizeX*dataSizeY;
+	float *sharedScale2 = shared + 2*dataSizeX*dataSizeY;
+	float pxVal = 0.0;
+	float pxRank = 0.0;
+	float trace = 0.0;
+	float det = 0.0;
+	int ptCount = 0;
+
+
+	// Load data to shared
+	cudaMemcpyGlobalToShared( sharedScale0, gDoG, tx, ty
+							, gx, gy, bDimX, bDimY, w, p, h
+							, nTilesX, nTilesY
+							, apronLeft, apronRight, apronUp, apronDown, bankOffset );
+	cudaMemcpyGlobalToShared( sharedScale1, gDoG + gDim, tx, ty
+							, gx, gy, bDimX, bDimY, w, p, h
+							, nTilesX, nTilesY
+							, apronLeft, apronRight, apronUp, apronDown, bankOffset );
+	cudaMemcpyGlobalToShared( sharedScale2, gDoG + 2*gDim, tx, ty
+							, gx, gy, bDimX, bDimY, w, p, h
+							, nTilesX, nTilesY
+							, apronLeft, apronRight, apronUp, apronDown, bankOffset );
+
+	for (int i = 0; i < nTilesX; ++i)
+	{
+		gx_ = gx + i*bDimX;
+		if(gx_ < w || gy < h)
+		{
+			sx = apronLeft + tx + i*bDimX;
+			sy = apronUp + ty;
+			gIdx = cuda2DTo1D( gx_, gy, p );
+			pxVal = sharedScale1[cuda2DTo1D( sx, sy, sDimX )];
+
+			//	Compare 3x3 region in all scales (extrema if pxRank == 9.0)
+			for (int l = -1; l < 2; ++l)
+			{
+				for (int m = -1; m < 2; ++m)
+				{
+					pxRank += (pxVal >= sharedScale0[cuda2DTo1D( sx + l, sy + m, sDimX )]) ? (1.0):(-1.0);
+					pxRank += (pxVal >= sharedScale1[cuda2DTo1D( sx + l, sy + m, sDimX )]) ? (1.0):(-1.0);
+					pxRank += (pxVal >= sharedScale2[cuda2DTo1D( sx + l, sy + m, sDimX )]) ? (1.0):(-1.0);
+				}
+			}
+
+			//	Check if extrema has low edge response
+			trace = (gHessian + 0*gDim)[gIdx] + (gHessian + 1*gDim)[gIdx];
+			det = (gHessian + 0*gDim)[gIdx] * (gHessian + 1*gDim)[gIdx] + pow((gHessian + 2*gDim)[gIdx], 2);
+			if ( pxRank == 9.0
+				&& trace*trace/det < (pow( R_THRESH * 1, 2 ))/R_THRESH
+				&& abs(pxVal) > EXTREMA_THRESH
+				&&  d_PointCounter[scaleIdx] < c_MaxPointCount)
+			{
+				ptCount = atomicAdd(&d_PointCounter[scaleIdx], 1);
+				pt[ptCount].xpos = gx_;
+				pt[ptCount].ypos = gy;
+			}
+		}
+	}
+}
 __global__ void gradientKernel( float *gDst, float *gSrc
 							, int w, int p, int h
 							, const int nTilesX, const int nTilesY

@@ -60,11 +60,11 @@ int sift( std::string dstPath, std::string *srcPath)
 		cv::Mat1f matRes(h, w);
 		CUDA_SAFECALL( cudaMalloc( (void **) &d_res,(size_t)( p*h*sizeof( float ) ) ) );
 
-		extractSift(d_res, resOctave, cuImg[i].d_data, cuImg[i].width, cuImg[i].pitch, cuImg[i].height, 0, stream[i], i );
+		extractSift(siftData[i].d_data, d_res, resOctave, cuImg[i].d_data, cuImg[i].width, cuImg[i].pitch, cuImg[i].height, 0, stream[i], i );
 
 		//	Copy data to result image
 		CUDA_SAFECALL( cudaMemcpy2DAsync( (void *)matRes.data, (size_t)(w*sizeof( float )), (const void *)d_res, (size_t)(p* sizeof( float )), (size_t)(w*sizeof( float )), (size_t)h, cudaMemcpyDeviceToHost, stream[i]) );
-		image::imshow( matRes );
+//		image::imshow( matRes );
 //			int gDim = cuRes.pitch*cuRes.height;
 //		copyDeviceData(cuRes.d_data, 4*gDim + d_multiBlur[i], cuRes.width, cuRes.pitch, cuRes.height, stream[i] );
 		//	Free pointers
@@ -83,7 +83,9 @@ int sift( std::string dstPath, std::string *srcPath)
 
 	//	Show result
 //	image::imshow( matRes );
-//	image::imshow( matImg[0] );
+	for (int i = 0; i < 1200; ++i)
+		image::drawPoint( matImg[0], siftData[0].h_data[i].xpos, siftData[0].h_data[i].ypos, 1, 0.0);
+	image::imshow( matImg[0] );
 
 	//	Destroy cuda streams for batchSize
 	for (int i = 0; i < BATCH_SIZE; ++i)
