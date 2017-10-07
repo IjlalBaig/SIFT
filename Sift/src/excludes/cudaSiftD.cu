@@ -14,11 +14,126 @@ __global__ void subtractKernel( float *gDst, float *gSrc1, float *gSrc2
 		gDst[gIdx] = gSrc1[gIdx] - gSrc2[gIdx];
 }
 
+__global__ void OrientationKernel( SiftPoint *pt, float *gGradient
+								, int w, int p, int h
+								, const int scalePtCnt, const int scaleIdx, const int streamIdx )
+{
+	int tx = threadIdx.x;
+	int ty = threadIdx.y;
+	int bDimX = blockDim.x;
+	int bDimY = blockDim.y;
+	int bIdxX = blockIdx.x;
+	int bIdxY = blockIdx.y;
+	int tIdx = cuda2DTo1D(tx, ty, bDimX);
+	int lPtIdx = tIdx + bIdxX*ORIENT_BUFFER;
+	int binVal = 0;
+	__shared__ float sharedPtPos[ORIENT_BUFFER][2];
+	__shared__ float sharedMag[ORIENT_BUFFER][16*16];
+	__shared__ float sharedDir[ORIENT_BUFFER][16*16];
+	__shared__ float sharedHist[ORIENT_BUFFER*32];
+	__shared__ float sharedHistThresh[ORIENT_BUFFER];
+	__shared__ int sharedHistMaxIdx[ORIENT_BUFFER];
+
+	int tPtCnt = ( scalePtCnt - (bIdxX + 1)*ORIENT_BUFFER  > 0)? ORIENT_BUFFER : scalePtCnt%ORIENT_BUFFER;
+
+
+	//	Load pt positions
+	if (tIdx < tPtCnt && d_PointStartIdx[streamIdx] + lPtIdx < MAX_POINTCOUNT)
+	{
+		sharedPtPos[tIdx][1] =  pt[ d_PointStartIdx[streamIdx] + lPtIdx].xpos;
+		sharedPtPos[tIdx][2] =  pt[ d_PointStartIdx[streamIdx] + lPtIdx].ypos;
+	}
+	__syncthreads();
+
+	// 	Load gradient magnitude and direction regions
+	for (int i = 0; i < ORIENT_BUFFER; ++i)
+	{
+		sharedMag[i][cuda2DTo1D(tx, ty, bDimX)] = gGradient[cuda2DTo1D(sharedPtPos[i][1] - 7 + tx, sharedPtPos[i][2] - 7 + ty, p)];
+		sharedDir[i][cuda2DTo1D(tx, ty, bDimX)] = (gGradient + p*h)[cuda2DTo1D(sharedPtPos[i][1] - 7 + tx, sharedPtPos[i][2] - 7 + ty, p)];
+	}
+	__syncthreads();
+
+	// 	Multiply gaussian wnd
+	for (int i = 0; i < ORIENT_BUFFER; ++i)
+	{
+		sharedMag[i][cuda2DTo1D(tx, ty, bDimX)] *= c_GaussianWnd[ tx + scaleIdx*WND_KERNEL_SIZE];
+		sharedMag[i][cuda2DTo1D(ty, tx, bDimX)] *= c_GaussianWnd[ tx + scaleIdx*WND_KERNEL_SIZE];
+
+	}
+	__syncthreads();
+
+	//	Initialize histogram
+	for (int i = 0; i < 2; ++i)
+	{
+		sharedHist[tIdx + i*8*32] = 0;
+	}
+	//	Compute patch histogram
+	for (int i = 0; i < ORIENT_BUFFER; ++i)
+	{
+		binVal = cudaAssignBin(sharedDir[i][cuda2DTo1D(tx, ty, bDimX)], 32);
+		atomicAdd(&sharedHist[i*ORIENT_BUFFER + binVal], sharedMag[i][cuda2DTo1D(tx, ty, bDimX)]);
+	}
+	__syncthreads();
+
+	//	Find histogram max oientation threshold
+	for (int i = 0; i < 2; ++i)
+	{
+		shflmax(&sharedHistMaxIdx[8*i], &sharedHist[i*8*32]);
+	}
+
+	//	Save orientation and scale
+	if (tIdx < tPtCnt && d_PointStartIdx[streamIdx] + lPtIdx < MAX_POINTCOUNT )
+	{
+		pt[d_PointStartIdx[streamIdx] + lPtIdx].orientation = 360/32*sharedHistMaxIdx[tIdx];
+		pt[d_PointStartIdx[streamIdx] + lPtIdx].scale = 10;
+	}
+}
+
+__global__ void DescriptorKernel( SiftPoint *pt, cudaTextureObject_t texObj
+								, int w, int p, int h
+								, const int scalePtCnt, const int scaleIdx, const int streamIdx )
+{
+	__shared__ float hist[16][128];
+	__shared__ float sharedMag[16][16*16];
+	__shared__ float sharedDir[16][16*16];
+//	copy points to shared memory
+//	copy corresponding gradient rotated to shared memory
+//	xply wnd x, y
+//	for every 16 pixels make 8 bin histogram
+
+
+
+}
+__global__ void transformKernel(float* output, cudaTextureObject_t texObj, int w, int p, int h, float theta)
+{
+	// Calculate normalized texture coordinates
+
+	unsigned int gx = blockIdx.x * blockDim.x + threadIdx.x;
+	unsigned int gy = blockIdx.y * blockDim.y + threadIdx.y;
+	float u = gx / (float)w;
+	float v = gy / (float)h;
+
+	// Transform coordinates
+	// subtract normallized point position and add it later
+	u -= 0.0f;
+	v -= 0.0f;
+	float tu = u * cosf(theta) - v * sinf(theta) + 0.0f;
+	float tv = v * cosf(theta) + u * sinf(theta) + 0.0f;
+	// Read from texture and write to global memory
+	if(gx < w && gy < h)
+		output[gy * p + gx] = tex2D<float>(texObj, tu, tv);
+}
+
+__global__ void warpMaxKernel(float *d_data)
+{
+//	shflmax(d_data, d_data);
+}
+
 __global__ void findExtremaKernel( SiftPoint *pt, float *gDoG, float *gHessian
 								, int w, int p, int h
 								, const int nTilesX, const int nTilesY
 								, const int apronLeft, const int apronRight, const int apronUp, const int apronDown
-								, const int bankOffset, const int scaleIdx )
+								, const int bankOffset, const int streamIdx )
 {
 	int tx = threadIdx.x;
 	int ty = threadIdx.y;
@@ -38,8 +153,8 @@ __global__ void findExtremaKernel( SiftPoint *pt, float *gDoG, float *gHessian
 	int gDim = p*h;
 	extern __shared__ float shared[];
 	float *sharedScale0 = shared;
-	float *sharedScale1 = shared + dataSizeX*dataSizeY;
-	float *sharedScale2 = shared + 2*dataSizeX*dataSizeY;
+	float *sharedScale1 = shared + (dataSizeX + bankOffset)*dataSizeY;
+	float *sharedScale2 = shared + 2*(dataSizeX + bankOffset)*dataSizeY;
 	float pxVal = 0.0;
 	float pxRank = 0.0;
 	float trace = 0.0;
@@ -85,14 +200,19 @@ __global__ void findExtremaKernel( SiftPoint *pt, float *gDoG, float *gHessian
 			//	Check if extrema has low edge response
 			trace = (gHessian + 0*gDim)[gIdx] + (gHessian + 1*gDim)[gIdx];
 			det = (gHessian + 0*gDim)[gIdx] * (gHessian + 1*gDim)[gIdx] + pow((gHessian + 2*gDim)[gIdx], 2);
-			if ( pxRank == 9.0
+			if ( gx_ > 8 && gx_ < w - 8
+				&& gy > 8 && gy < h - 8
+				&& pxRank == 9.0
 				&& trace*trace/det < (pow( R_THRESH * 1, 2 ))/R_THRESH
 				&& abs(pxVal) > EXTREMA_THRESH
-				&&  d_PointCounter[scaleIdx] < c_MaxPointCount)
+				&&  d_PointCount[streamIdx] < c_MaxPointCount)
 			{
-				ptCount = atomicAdd(&d_PointCounter[scaleIdx], 1);
-				pt[ptCount].xpos = gx_;
-				pt[ptCount].ypos = gy;
+				ptCount = atomicAdd(&d_PointCount[streamIdx], 1);
+				if(ptCount < MAX_POINTCOUNT)
+				{
+					pt[ptCount].xpos = gx_;
+					pt[ptCount].ypos = gy;
+				}
 			}
 		}
 	}

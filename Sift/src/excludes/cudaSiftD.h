@@ -4,7 +4,7 @@
 #include "../utils.h"
 // Define sift constants
 #define SIGMA 2.0f
-#define MIN_THRESH 2.0f
+#define MIN_THRESH 15.0f
 #define R_THRESH 10.0f
 
 // Define kernel parameters
@@ -15,28 +15,35 @@
 #define WIDTH_CONV_BLOCK 32
 #define HEIGHT_CONV_BLOCK 32
 #define DEFUALT_BLOCK_DIM 32
+#define ORIENT_BLOCK_DIM 16
 
 
 // Constant memory variables
 __constant__ float c_GaussianBlur[(N_SCALES + 3) * B_KERNEL_SIZE];
+__constant__ float c_GaussianWnd[N_SCALES * WND_KERNEL_SIZE];
 __constant__ float c_EdgeThreshold;
 __constant__ float c_ExtremaThreshold;
 __constant__ unsigned int c_MaxPointCount;
-//__constant__ int c_GaussianBlurSize[N_SCALES + 3];
-//__constant__ int c_GaussianBlurKernelPtr[N_SCALES + 3];
-//__constant__ int c_MaxGaussianBlurSize;
 
 // static memory variables
-__device__ unsigned int d_PointCounter[BATCH_SIZE];
-
+__device__ unsigned int d_PointCount[BATCH_SIZE];
+__device__ unsigned int d_PointStartIdx[BATCH_SIZE];
 // Define device free functions
 __device__ int cudaIDivUpOdd( int num, int den )
 {
 	int result = (num%den != 0) ? (num/den + 1) : (num/den);
 	return (result%2 != 0) ? (result):(result+1);
 }
+
 __device__ int cudaIDivUpNear( int num, int den ){return (num%den != 0) ? (num/den + 1) : (num/den);}
 __device__ int cudaIAlignUp( int A, int a ){return (A%a != 0) ? (A + a - A%a) : (A);}
+__device__ int cudaAssignBin(float theta, int nBins)
+{
+	float binRange = 360.0f / nBins;
+	theta = (theta < 0) ? (theta + 360) : (theta);
+	theta = fmodf(theta, 360.0);
+	return __float2int_rd(theta / binRange);
+}
 __device__ int cuda2DTo1D(int x, int y, int width){return x + y * width;}
 __device__ void cudaMemcpyGlobalToShared( float *s, const float *g
 					, const int tx, const int ty, const int gx, const int gy
@@ -74,7 +81,22 @@ __device__ void cudaMemcpyGlobalToShared( float *s, const float *g
 	}
 	__syncthreads();
 }
+__device__ void shflmax(int* const maxIdx, const float* const vin)
+{
+	int tIdx = cuda2DTo1D(threadIdx.x, threadIdx.y, blockDim.x);
+	float v = vin[tIdx];
+	float m = v;
+	int idx = 0;
+	v = max(v,__shfl_xor(v,16));
+	v = max(v,__shfl_xor(v, 8));
+	v = max(v,__shfl_xor(v, 4));
+	v = max(v,__shfl_xor(v, 2));
+	v = max(v,__shfl_xor(v, 1));
+	idx = __ffs(__ballot(m == v));
 
+	if (tIdx%32 == 0)
+		maxIdx[tIdx/32] = idx-1;
+}
 __device__ void cudaMemcpySharedToGlobal( float *g, const float *s
 					, const int tx, const int ty, const int gx, const int gy
 					, const int bDimX, const int bDimY, const int w, const int p, const int h

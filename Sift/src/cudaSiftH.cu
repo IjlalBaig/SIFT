@@ -4,6 +4,26 @@
 #include "cudaUtils.h"
 #include "sift.h"
 
+int updatePtStartIdx( int streamIdx )
+{
+	unsigned int *d_ptrStartIdx;
+	unsigned int *d_ptrPointCount;
+	CUDA_SAFECALL( cudaGetSymbolAddress( (void **) &d_ptrStartIdx, d_PointStartIdx ) );
+	CUDA_SAFECALL( cudaGetSymbolAddress( (void **) &d_ptrPointCount, d_PointCount ) );
+	CUDA_SAFECALL( cudaMemcpy(&d_ptrStartIdx[streamIdx], &d_ptrPointCount[streamIdx], sizeof( unsigned int ), cudaMemcpyDeviceToDevice ) );
+	int result = -1;
+	CUDA_SAFECALL( cudaMemcpy(&result, &d_ptrPointCount[streamIdx], sizeof( unsigned int ), cudaMemcpyDeviceToHost ) );
+	printf("result\t%d\n", result);
+	return result;
+}
+
+int getPointCount(int streamIdx)
+{
+	int h_pointCount[BATCH_SIZE];
+	CUDA_SAFECALL( cudaMemcpyFromSymbol( &h_pointCount, d_PointCount, sizeof( int ) ) );
+	return h_pointCount[streamIdx];
+}
+
 void copyDeviceData( float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream )
 {
 	dim3 blockSize( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
@@ -11,51 +31,66 @@ void copyDeviceData( float *dst, float *src, int width, int pitch, int height, c
 	copyKernel<<<gridSize, blockSize, 0, stream>>>( dst, src, width, pitch, height );
 }
 
-void computeExtrema()
+void computeOctaveSift( SiftPoint *pt, float *src_DoG, float *src_Hessian, float *src_Gradient, int width, int pitch, int height, cudaStream_t &stream, int streamIdx )
 {
-//	// Get max apron Size
-//	int maxApron = 1;
-//	// Set bankOffset so sDimX is odd and no bank conlicts
-//	int bankOffset = 1;
-//	// Set hessian kernel parameters
-//	int nTilesX = 11 ;
-//	int nTilesY = 1;
-//	dim3 blockSize( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
-//	dim3 gridSize( iDivUp( width, WIDTH_CONV_BLOCK*nTilesX ), iDivUp( height, HEIGHT_CONV_BLOCK*nTilesY ), 1 );
-//	int sDimX = nTilesX*WIDTH_CONV_BLOCK + 2*maxApron + bankOffset;
-//	int sDimY = nTilesY*HEIGHT_CONV_BLOCK + 2*maxApron;
-//	int gDim = pitch*height;
-}
 
-void findExtrema( SiftPoint *pt, float *src_DoG, float *src_Hessian, int width, int pitch, int height, cudaStream_t &stream )
-{
-	// Get max apron Size
+	/*
+	 *
+	 *
+	 *
+	 */
+	//	cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc( 32, 0, 0, 0, cudaChannelFormatKindFloat );
+	//	safeCall( cudaMallocArray( &m, &channelDesc, w, h ) );
+	//	safeCall( cudaMallocArray( &theta, &channelDesc, w, h ) );
+	/*
+	 *
+	 *
+	 *
+	 */
+
+
+	// 	Get max apron Size
 	int maxApron = 1;
-	// Set bankOffset so sDimX is odd and no bank conlicts
+	// 	Set bankOffset so sDimX is odd and no bank conflicts occur
 	int bankOffset = 3;
-	// Set hessian kernel parameters
+	// 	Set hessian kernel parameters
 	int nTilesX = 3;
 	int nTilesY = 1;
 	int nScales = 3;
-	dim3 blockSize( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
-	dim3 gridSize( iDivUp( width, WIDTH_CONV_BLOCK*nTilesX ), iDivUp( height, HEIGHT_CONV_BLOCK*nTilesY ), 1 );
+	dim3 blockSizeXtr( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
+	dim3 gridSizeXtr( iDivUp( width, WIDTH_CONV_BLOCK*nTilesX ), iDivUp( height, HEIGHT_CONV_BLOCK*nTilesY ), 1 );
 	int sDimX = nScales*nTilesX*WIDTH_CONV_BLOCK + 2*maxApron + bankOffset;
 	int sDimY = nTilesY*HEIGHT_CONV_BLOCK + 2*maxApron;
 	int gDim = pitch*height;
 	int nUnitsPerHessian = 3;
+	int nUnitsPerGradient = 2;
+	int ptCountStart = 0;
+	int scalePointCount = 0;
 	for (int i = 0; i < N_SCALES; ++i)
-			findExtremaKernel<<<gridSize, blockSize, sDimX*sDimY*sizeof( float ), stream>>>( pt, src_DoG + i*gDim, src_Hessian + i*nUnitsPerHessian*gDim
-																						, width, pitch, height
-																						, nTilesX, nTilesY
-																						, maxApron, maxApron, maxApron, maxApron
-																						, bankOffset, i );
-
+	{
+		ptCountStart = updatePtStartIdx( streamIdx );
+		findExtremaKernel<<<gridSizeXtr, blockSizeXtr, sDimX*sDimY*sizeof( float ), stream>>>( pt, src_DoG + i*gDim, src_Hessian + i*nUnitsPerHessian*gDim
+																					, width, pitch, height
+																					, nTilesX, nTilesY
+																					, maxApron, maxApron, maxApron, maxApron
+																					, bankOffset, streamIdx );
+		scalePointCount =  getPointCount( streamIdx ) - ptCountStart;
+		dim3 blockSizeOrient(16,16,1);
+		dim3 gridSizeOrient( iDivUp(scalePointCount, ORIENT_BUFFER ), 1, 1 );
+		OrientationKernel<<<gridSizeOrient, blockSizeOrient, 0, stream>>>( pt, src_Gradient + i*nUnitsPerGradient*gDim
+																		, width, pitch, height
+																		, scalePointCount, i, streamIdx);
+		scalePointCount =  getPointCount( streamIdx ) - ptCountStart;
+//		DescriptorKernel<<<gridSizeOrient, blockSizeOrient, 0, stream>>>(pt, src_Gradient_tex + i*nUnitsPerGradient*gDim
+//																		, width, pitch, height
+//																		, scalePointCount, i, streamIdx);
+	}
 }
 
 void computeDiffOfGauss( float *dst, float *src, int width, int pitch, int height, cudaStream_t &stream )
 {
 
-	// Set DoG kernel parameters
+	// 	Set DoG kernel parameters
 	dim3 blockSize(WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
 	dim3 gridSize( iDivUp( width, WIDTH_CONV_BLOCK ), iDivUp( height, HEIGHT_CONV_BLOCK ), 1 );
 	int gDim = pitch*height;
@@ -173,9 +208,7 @@ void allocateOctave( float *&multiBlur, float *&multiDoG
 	CUDA_SAFECALL( cudaMalloc( (void **) &multiGradient,(size_t)(p * h * 2 * N_SCALES * sizeof( float )) ) );
 
 
-//	cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc( 32, 0, 0, 0, cudaChannelFormatKindFloat );
-//	safeCall( cudaMallocArray( &m, &channelDesc, w, h ) );
-//	safeCall( cudaMallocArray( &theta, &channelDesc, w, h ) );
+
 }
 
 void freeOctave( float *&multiBlur, float *&multiDoG
@@ -193,12 +226,66 @@ void freeOctave( float *&multiBlur, float *&multiDoG
 //	safeCall( cudaFreeArray( theta ) );
 }
 
-int getPointCount(int streamIdx)
+void testWarpMax( cudaStream_t &stream )
 {
-	int h_pointCounter[BATCH_SIZE];
-	CUDA_SAFECALL( cudaMemcpyFromSymbol( &h_pointCounter, d_PointCounter, sizeof( int ) ) );
-	return h_pointCounter[streamIdx];
+	//	Define pointers
+	float *h_data;
+	float *d_data;
+
+	//	Allocate memory
+	h_data = (float *)malloc( 64*sizeof( float ) );
+	CUDA_SAFECALL( cudaMalloc( (void **)&d_data, (size_t)(64*sizeof( float ))) );
+
+	//	Set h_data
+	for (int i = 0; i < 64; ++i)
+	{
+		h_data[i] = rand() % 32;
+		printf("random value is \t%f\n ", h_data[i]);
+	}
+
+	//	Copy to d_data
+	cudaMemcpy( d_data, h_data, 64*sizeof ( float ), cudaMemcpyHostToDevice );
+
+	warpMaxKernel<<<1 , 64, 0, stream>>>(d_data);
+
+	//	Readback results
+	cudaMemcpy( h_data, d_data, 64*sizeof ( float ), cudaMemcpyDeviceToHost );
+
+	//	Display results
+	printf("max value is \t%f\n ", h_data[0]);
+	printf("max value is \t%f\n ", h_data[1]);
+	printf("max value is \t%f\n ", h_data[2]);
+	printf("max value is \t%f\n ", h_data[3]);
+	printf("max value is \t%f\n ", h_data[4]);
+	printf("max value is \t%f\n ", h_data[16]);
+	printf("max value is \t%f\n ", h_data[32]);
 }
+
+void linear2cuArray(cudaArray *cuArray, float *src, cudaTextureObject_t &texObj, int w, int p, int h)
+{
+// 	Copy d_data to cuArray
+	cudaMemcpy2DToArray(cuArray, 0, 0, src, p*sizeof(float), w*sizeof(float), h, cudaMemcpyDeviceToDevice);
+
+// 	Specify texture
+	struct cudaResourceDesc resDesc;
+	memset(&resDesc, 0, sizeof(resDesc));
+	resDesc.resType = cudaResourceTypeArray;
+	resDesc.res.array.array = cuArray;
+
+// 	Specify texture object parameters
+	struct cudaTextureDesc texDesc;
+	memset(&texDesc, 0, sizeof(texDesc));
+	texDesc.addressMode[0] = cudaAddressModeClamp;
+	texDesc.addressMode[1] = cudaAddressModeClamp;
+	texDesc.filterMode = cudaFilterModeLinear;
+	texDesc.readMode = cudaReadModeElementType;
+	texDesc.normalizedCoords = 1;
+
+// 	Create texture object
+	texObj = 0;
+	cudaCreateTextureObject(&texObj, &resDesc, &texDesc, NULL);
+}
+
 
 void extractSift(SiftPoint *siftPt, float *d_res, int resOctave, float *d_src, int width, int pitch, int height, int octaveIdx, cudaStream_t &stream, int streamIdx )
 {
@@ -206,6 +293,7 @@ void extractSift(SiftPoint *siftPt, float *d_res, int resOctave, float *d_src, i
 	printf("%d\n", ptCount);
 	if (ptCount < MAX_POINTCOUNT)
 	{
+
 		//	Allocate octave pointers
 		float *d_multiBlur;
 		float *d_multiDoG;
@@ -228,8 +316,35 @@ void extractSift(SiftPoint *siftPt, float *d_res, int resOctave, float *d_src, i
 		//	Compute octave gradient
 		computeGradient( d_multiGradient, d_multiBlur, width, pitch, height, stream );
 
-		//	Find extrema points
-		findExtrema( siftPt, d_multiDoG, d_multiHessian, width, pitch, height, stream );
+		//	Compute octave SiftData
+		computeOctaveSift( siftPt, d_multiDoG, d_multiHessian, d_multiGradient, width, pitch, height, stream, streamIdx );
+
+		/*
+		 *
+		 *
+		 *
+		 */
+		cudaArray *cuArray;
+		// 	Allocate CUDA array in device memory
+		cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(32, 0, 0, 0, cudaChannelFormatKindFloat);
+
+		CUDA_SAFECALL(cudaMallocArray(&cuArray, &channelDesc, width, height));
+
+		cudaTextureObject_t texObj;
+		linear2cuArray(cuArray, d_multiBlur, texObj, width, pitch, height);
+		// 	Invoke kernel
+		dim3 dimBlock(32, 32);
+		dim3 dimGrid(iDivUp(pitch, 32), iDivUp(height, 32), 1);
+		transformKernel<<<dimGrid, dimBlock>>>(d_multiGradient, texObj, width, pitch, height, 45);
+		// Destroy texture object
+		CUDA_SAFECALL(cudaDestroyTextureObject(texObj));
+		// Free device memory
+		CUDA_SAFECALL(cudaFreeArray(cuArray));
+		/*
+		 *
+		 *
+		 *
+		 */
 		//	Copy back result
 		if (resOctave == octaveIdx)
 		{
@@ -254,19 +369,25 @@ void extractSift(SiftPoint *siftPt, float *d_res, int resOctave, float *d_src, i
 			extractSift( siftPt, d_res, resOctave, d_src_, width_, pitch_, height_, octaveIdx, stream, streamIdx );
 			CUDA_SAFECALL( cudaFree( d_src_ ) );
 		}
+
 		//	Free octave
 		freeOctave(d_multiBlur, d_multiDoG, d_multiHessian, d_multiGradient );
 	}
 }
 
-
 void initDeviceVariables()
 {
-	//	Allocate d_PointCounter Variables
-	int h_pointCounter[BATCH_SIZE];
+	//	Allocate d_globalPtCount Variables
+	int h_PointCount[BATCH_SIZE];
 	for (int i = 0; i < BATCH_SIZE; ++i)
-		h_pointCounter[i] = 0;
-	CUDA_SAFECALL( cudaMemcpyToSymbol( d_PointCounter, &h_pointCounter, BATCH_SIZE*sizeof( int ) ) );
+		h_PointCount[i] = 0;
+	CUDA_SAFECALL( cudaMemcpyToSymbol( d_PointCount, &h_PointCount, BATCH_SIZE*sizeof( int ) ) );
+
+	//	Allocate d_scalePtCount Variables
+//	int h_sPtCount[BATCH_SIZE];
+//	for (int i = 0; i < BATCH_SIZE; ++i)
+//		h_sPtCount[i] = 0;
+//	CUDA_SAFECALL( cudaMemcpyToSymbol( d_scalePtCount, &h_sPtCount, BATCH_SIZE*sizeof( int ) ) );
 }
 
 void initDeviceConstant()
@@ -281,10 +402,23 @@ void initDeviceConstant()
 		sigmaNew = pow( k, i-1 ) * SIGMA;
 
 		// 	Push new kernel array to gaussiaBlur[]
-		imfilter::gaussian1D( gaussianBlur + i * (2*B_KERNEL_RADIUS + 1), sigmaNew );
+		imfilter::gaussian1D( gaussianBlur + i * (2*B_KERNEL_RADIUS + 1), sigmaNew, 2*B_KERNEL_RADIUS + 1 );
 	}
 	// 	Copy gaussian kernel to constant memory
 	CUDA_SAFECALL( cudaMemcpyToSymbol( c_GaussianBlur, &gaussianBlur, (N_SCALES + 3) * B_KERNEL_SIZE * sizeof( float ) ) );
+
+	// 	Set c_GaussianWnd[] Mask for each scale
+	float gaussianWnd[(N_SCALES) * WND_KERNEL_SIZE];
+
+	for(int i = 0; i < N_SCALES; ++i)
+	{
+		sigmaNew = pow( k, i ) * SIGMA * 1.5;
+
+		// 	Push new kernel array to gaussiaWnd[]
+		imfilter::gaussian1D( gaussianWnd + i * WND_KERNEL_SIZE, sigmaNew, WND_KERNEL_SIZE);
+	}
+	// 	Copy gaussian kernel to constant memory
+	CUDA_SAFECALL( cudaMemcpyToSymbol( c_GaussianWnd, &gaussianWnd, N_SCALES * WND_KERNEL_SIZE * sizeof( float ) ) );
 
 	//	Copy extrema threshold to constant memory
 	float extremaThreshold = EXTREMA_THRESH;
@@ -310,6 +444,8 @@ void testcopyKernel( cudaStream_t &stream )
 {
 	kernel<<<1, 10, 0, stream>>>();
 }
+
+
 
 void sharedKernel( cudaStream_t &stream )
 {

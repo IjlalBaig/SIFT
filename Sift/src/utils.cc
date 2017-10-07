@@ -46,16 +46,16 @@ int image::drawPoint( cv:: Mat &img, float x, float y, float scale, float orient
  *
  * Image filtering
  */
-int imfilter::gaussian1D( float *kernelPtr, float sigma )
+int imfilter::gaussian1D( float *kernelPtr, float sigma, int kernelSize )
 {
 	float sum = 0;
-	for (int i = 0; i < 2*B_KERNEL_RADIUS + 1; ++i)
+	for (int i = 0; i < kernelSize; ++i)
 	{
-		kernelPtr[i] = (1/(pow( 2.0f * PI, 0.5f ) * sigma)) * exp( -pow( i - B_KERNEL_RADIUS, 2 )  / (2 * pow( sigma, 2 )) );
+		kernelPtr[i] = (1/(pow( 2.0f * PI, 0.5f ) * sigma)) * exp( -pow( i - (float(kernelSize - 1 )/2), 2 )  / (2 * pow( sigma, 2 )) );
 		sum += kernelPtr[i];
 	}
 	// Normalize kernel
-	for (int i = 0; i < 2*B_KERNEL_RADIUS + 1; ++i)
+	for (int i = 0; i < kernelSize; ++i)
 		kernelPtr[i] /= sum;
 	return 0;
 }
