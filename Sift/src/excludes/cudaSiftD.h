@@ -97,6 +97,18 @@ __device__ void shflmax(int* const maxIdx, const float* const vin)
 	if (tIdx%32 == 0)
 		maxIdx[tIdx/32] = idx-1;
 }
+
+__device__ float shflsum(const float* const vin)
+{
+	int tIdx = cuda2DTo1D(threadIdx.x, threadIdx.y, blockDim.x);
+	float v = vin[tIdx];
+	v +=__shfl_down(v,16);
+	v +=__shfl_down(v, 8);
+	v +=__shfl_down(v, 4);
+	v +=__shfl_down(v, 2);
+	v +=__shfl_down(v, 1);
+	return v;
+}
 __device__ void cudaMemcpySharedToGlobal( float *g, const float *s
 					, const int tx, const int ty, const int gx, const int gy
 					, const int bDimX, const int bDimY, const int w, const int p, const int h

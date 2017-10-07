@@ -4,6 +4,39 @@
 #include "cudaUtils.h"
 #include "sift.h"
 
+void setTexture(cudaArray *&cuArray, cudaTextureObject_t &texObj , float *src, int w, int p, int h)
+{
+	cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(32, 0, 0, 0, cudaChannelFormatKindFloat);
+	CUDA_SAFECALL(cudaMallocArray(&cuArray, &channelDesc, w, h));
+// 	Copy d_data to cuArray
+	for (int i = 0; i < N_SCALES; ++i)
+		cudaMemcpy2DToArray(cuArray, 0, 0, src, p*sizeof(float), w*sizeof(float), h, cudaMemcpyDeviceToDevice);
+
+// 	Specify texture
+	struct cudaResourceDesc resDesc;
+	memset(&resDesc, 0, sizeof(resDesc));
+	resDesc.resType = cudaResourceTypeArray;
+	resDesc.res.array.array = cuArray;
+
+// 	Specify texture object parameters
+	struct cudaTextureDesc texDesc;
+	memset(&texDesc, 0, sizeof(texDesc));
+	texDesc.addressMode[0] = cudaAddressModeClamp;
+	texDesc.addressMode[1] = cudaAddressModeClamp;
+	texDesc.filterMode = cudaFilterModeLinear;
+	texDesc.readMode = cudaReadModeElementType;
+	texDesc.normalizedCoords = 1;
+
+// 	Create texture object
+	texObj = 0;
+	cudaCreateTextureObject(&texObj, &resDesc, &texDesc, NULL);
+}
+void freeTexture(cudaArray *&cuArray, cudaTextureObject_t &texObj)
+{
+	CUDA_SAFECALL(cudaDestroyTextureObject(texObj));
+	CUDA_SAFECALL(cudaFreeArray(cuArray));
+}
+
 int updatePtStartIdx( int streamIdx )
 {
 	unsigned int *d_ptrStartIdx;
@@ -33,21 +66,6 @@ void copyDeviceData( float *dst, float *src, int width, int pitch, int height, c
 
 void computeOctaveSift( SiftPoint *pt, float *src_DoG, float *src_Hessian, float *src_Gradient, int width, int pitch, int height, cudaStream_t &stream, int streamIdx )
 {
-
-	/*
-	 *
-	 *
-	 *
-	 */
-	//	cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc( 32, 0, 0, 0, cudaChannelFormatKindFloat );
-	//	safeCall( cudaMallocArray( &m, &channelDesc, w, h ) );
-	//	safeCall( cudaMallocArray( &theta, &channelDesc, w, h ) );
-	/*
-	 *
-	 *
-	 *
-	 */
-
 
 	// 	Get max apron Size
 	int maxApron = 1;
@@ -81,9 +99,21 @@ void computeOctaveSift( SiftPoint *pt, float *src_DoG, float *src_Hessian, float
 																		, width, pitch, height
 																		, scalePointCount, i, streamIdx);
 		scalePointCount =  getPointCount( streamIdx ) - ptCountStart;
-//		DescriptorKernel<<<gridSizeOrient, blockSizeOrient, 0, stream>>>(pt, src_Gradient_tex + i*nUnitsPerGradient*gDim
-//																		, width, pitch, height
-//																		, scalePointCount, i, streamIdx);
+
+		cudaArray *cuArrayMag;
+		cudaArray *cuArrayDir;
+		cudaTextureObject_t texObjMag;
+		cudaTextureObject_t texObjDir;
+
+		setTexture( cuArrayMag, texObjMag, src_Gradient + i*nUnitsPerGradient*gDim, width, pitch, height );
+		setTexture( cuArrayDir, texObjDir, src_Gradient + (i*nUnitsPerGradient + 1)*gDim, width, pitch, height );
+
+
+		DescriptorKernel<<<gridSizeOrient, blockSizeOrient, 0, stream>>>(pt, texObjMag, texObjDir
+																		, width, pitch, height
+																		, scalePointCount, i, streamIdx);
+		freeTexture(cuArrayMag, texObjMag);
+		freeTexture(cuArrayDir, texObjDir);
 	}
 }
 
@@ -233,62 +263,43 @@ void testWarpMax( cudaStream_t &stream )
 	float *d_data;
 
 	//	Allocate memory
-	h_data = (float *)malloc( 64*sizeof( float ) );
-	CUDA_SAFECALL( cudaMalloc( (void **)&d_data, (size_t)(64*sizeof( float ))) );
+	h_data = (float *)malloc( 32*sizeof( float ) );
+	CUDA_SAFECALL( cudaMalloc( (void **)&d_data, (size_t)(32*sizeof( float ))) );
 
 	//	Set h_data
-	for (int i = 0; i < 64; ++i)
+	for (int i = 0; i < 32; ++i)
 	{
 		h_data[i] = rand() % 32;
 		printf("random value is \t%f\n ", h_data[i]);
 	}
 
 	//	Copy to d_data
-	cudaMemcpy( d_data, h_data, 64*sizeof ( float ), cudaMemcpyHostToDevice );
+	cudaMemcpy( d_data, h_data, 32*sizeof ( float ), cudaMemcpyHostToDevice );
 
-	warpMaxKernel<<<1 , 64, 0, stream>>>(d_data);
+	warpMaxKernel<<<1 , 32, 0, stream>>>(d_data);
 
 	//	Readback results
-	cudaMemcpy( h_data, d_data, 64*sizeof ( float ), cudaMemcpyDeviceToHost );
+	cudaMemcpy( h_data, d_data, 32*sizeof ( float ), cudaMemcpyDeviceToHost );
 
 	//	Display results
-	printf("max value is \t%f\n ", h_data[0]);
-	printf("max value is \t%f\n ", h_data[1]);
-	printf("max value is \t%f\n ", h_data[2]);
-	printf("max value is \t%f\n ", h_data[3]);
-	printf("max value is \t%f\n ", h_data[4]);
-	printf("max value is \t%f\n ", h_data[16]);
-	printf("max value is \t%f\n ", h_data[32]);
+//	printf("max value is \t%f\n ", h_data[0]);
+//	printf("max value is \t%f\n ", h_data[1]);
+//	printf("max value is \t%f\n ", h_data[2]);
+//	printf("max value is \t%f\n ", h_data[3]);
+//	printf("max value is \t%f\n ", h_data[4]);
+//	printf("max value is \t%f\n ", h_data[16]);
+//	printf("max value is \t%f\n ", h_data[32]);
 }
 
-void linear2cuArray(cudaArray *cuArray, float *src, cudaTextureObject_t &texObj, int w, int p, int h)
+void testMax( cudaStream_t &stream )
 {
-// 	Copy d_data to cuArray
-	cudaMemcpy2DToArray(cuArray, 0, 0, src, p*sizeof(float), w*sizeof(float), h, cudaMemcpyDeviceToDevice);
-
-// 	Specify texture
-	struct cudaResourceDesc resDesc;
-	memset(&resDesc, 0, sizeof(resDesc));
-	resDesc.resType = cudaResourceTypeArray;
-	resDesc.res.array.array = cuArray;
-
-// 	Specify texture object parameters
-	struct cudaTextureDesc texDesc;
-	memset(&texDesc, 0, sizeof(texDesc));
-	texDesc.addressMode[0] = cudaAddressModeClamp;
-	texDesc.addressMode[1] = cudaAddressModeClamp;
-	texDesc.filterMode = cudaFilterModeLinear;
-	texDesc.readMode = cudaReadModeElementType;
-	texDesc.normalizedCoords = 1;
-
-// 	Create texture object
-	texObj = 0;
-	cudaCreateTextureObject(&texObj, &resDesc, &texDesc, NULL);
+testWarpMax( stream );
 }
 
 
 void extractSift(SiftPoint *siftPt, float *d_res, int resOctave, float *d_src, int width, int pitch, int height, int octaveIdx, cudaStream_t &stream, int streamIdx )
 {
+
 	int ptCount = getPointCount(streamIdx);
 	printf("%d\n", ptCount);
 	if (ptCount < MAX_POINTCOUNT)
@@ -319,32 +330,6 @@ void extractSift(SiftPoint *siftPt, float *d_res, int resOctave, float *d_src, i
 		//	Compute octave SiftData
 		computeOctaveSift( siftPt, d_multiDoG, d_multiHessian, d_multiGradient, width, pitch, height, stream, streamIdx );
 
-		/*
-		 *
-		 *
-		 *
-		 */
-		cudaArray *cuArray;
-		// 	Allocate CUDA array in device memory
-		cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(32, 0, 0, 0, cudaChannelFormatKindFloat);
-
-		CUDA_SAFECALL(cudaMallocArray(&cuArray, &channelDesc, width, height));
-
-		cudaTextureObject_t texObj;
-		linear2cuArray(cuArray, d_multiBlur, texObj, width, pitch, height);
-		// 	Invoke kernel
-		dim3 dimBlock(32, 32);
-		dim3 dimGrid(iDivUp(pitch, 32), iDivUp(height, 32), 1);
-		transformKernel<<<dimGrid, dimBlock>>>(d_multiGradient, texObj, width, pitch, height, 45);
-		// Destroy texture object
-		CUDA_SAFECALL(cudaDestroyTextureObject(texObj));
-		// Free device memory
-		CUDA_SAFECALL(cudaFreeArray(cuArray));
-		/*
-		 *
-		 *
-		 *
-		 */
 		//	Copy back result
 		if (resOctave == octaveIdx)
 		{
@@ -353,7 +338,7 @@ void extractSift(SiftPoint *siftPt, float *d_res, int resOctave, float *d_src, i
 		}
 		//	Check if numPts == maxPts
 		octaveIdx += 1;
-		if (octaveIdx < N_OCTAVES /*&& numPts < maxPts*/)
+		if (octaveIdx < N_OCTAVES)
 		{
 			float *d_src_;
 			int width_ = iDivUp(width, 2);

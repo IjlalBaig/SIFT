@@ -83,7 +83,6 @@ int sift( std::string dstPath, std::string *srcPath)
 	for (int i = 0; i < 1200; ++i)
 		image::drawPoint( matImg[0], siftData[0].h_data[i].xpos, siftData[0].h_data[i].ypos, siftData[0].h_data[i].scale, siftData[0].h_data[i].orientation);
 //	image::imshow( matImg[0] );
-
 	//	Destroy cuda streams for batchSize
 	for (int i = 0; i < BATCH_SIZE; ++i)
 		CUDA_SAFECALL( cudaStreamDestroy(stream[i]));

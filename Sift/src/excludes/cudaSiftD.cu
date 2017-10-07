@@ -21,9 +21,7 @@ __global__ void OrientationKernel( SiftPoint *pt, float *gGradient
 	int tx = threadIdx.x;
 	int ty = threadIdx.y;
 	int bDimX = blockDim.x;
-	int bDimY = blockDim.y;
 	int bIdxX = blockIdx.x;
-	int bIdxY = blockIdx.y;
 	int tIdx = cuda2DTo1D(tx, ty, bDimX);
 	int lPtIdx = tIdx + bIdxX*ORIENT_BUFFER;
 	int binVal = 0;
@@ -31,7 +29,7 @@ __global__ void OrientationKernel( SiftPoint *pt, float *gGradient
 	__shared__ float sharedMag[ORIENT_BUFFER][16*16];
 	__shared__ float sharedDir[ORIENT_BUFFER][16*16];
 	__shared__ float sharedHist[ORIENT_BUFFER*32];
-	__shared__ float sharedHistThresh[ORIENT_BUFFER];
+//	__shared__ float sharedHistThresh[ORIENT_BUFFER];
 	__shared__ int sharedHistMaxIdx[ORIENT_BUFFER];
 
 	int tPtCnt = ( scalePtCnt - (bIdxX + 1)*ORIENT_BUFFER  > 0)? ORIENT_BUFFER : scalePtCnt%ORIENT_BUFFER;
@@ -67,6 +65,7 @@ __global__ void OrientationKernel( SiftPoint *pt, float *gGradient
 	{
 		sharedHist[tIdx + i*8*32] = 0;
 	}
+	__syncthreads();
 	//	Compute patch histogram
 	for (int i = 0; i < ORIENT_BUFFER; ++i)
 	{
@@ -89,20 +88,120 @@ __global__ void OrientationKernel( SiftPoint *pt, float *gGradient
 	}
 }
 
-__global__ void DescriptorKernel( SiftPoint *pt, cudaTextureObject_t texObj
+__global__ void DescriptorKernel( SiftPoint *pt, cudaTextureObject_t texObjMag, cudaTextureObject_t texObjDir
 								, int w, int p, int h
 								, const int scalePtCnt, const int scaleIdx, const int streamIdx )
 {
-	__shared__ float hist[16][128];
+	int tx = threadIdx.x;
+	int ty = threadIdx.y;
+	int bDimX = blockDim.x;
+	int bIdxX = blockIdx.x;
+	int tIdx = cuda2DTo1D(tx, ty, bDimX);
+	int lPtIdx = tIdx + bIdxX*16;
+	int tPtCnt = ( scalePtCnt - (bIdxX + 1)*16  > 0)? 16 : scalePtCnt%16;
+	float u = 0;
+	float v = 0;
+	float u_ = 0;
+	float v_ = 0;
+	float uo = 0;
+	float vo = 0;
+	float sum = 0;
+	int sbIdxX = 0;
+	int sbIdxY = 0;
+	int binVal = 0;
+
+	__shared__ float sharedPtPos[16][2];
+	__shared__ float sharedPtOrient[16];
 	__shared__ float sharedMag[16][16*16];
 	__shared__ float sharedDir[16][16*16];
-//	copy points to shared memory
-//	copy corresponding gradient rotated to shared memory
-//	xply wnd x, y
-//	for every 16 pixels make 8 bin histogram
+	__shared__ float sharedHist[16][128];
+	__shared__ float sharedHistSum;
 
+	//	Load pt positions
+	if (tIdx < tPtCnt && d_PointStartIdx[streamIdx] + lPtIdx < MAX_POINTCOUNT)
+	{
+		sharedPtPos[tIdx][1] =  pt[ d_PointStartIdx[streamIdx] + lPtIdx].xpos;
+		sharedPtPos[tIdx][2] =  pt[ d_PointStartIdx[streamIdx] + lPtIdx].ypos;
+		sharedPtOrient[tIdx] = pt[ d_PointStartIdx[streamIdx] + lPtIdx].orientation;
+	}
+	__syncthreads();
 
+	// 	Load rotated gradient magnitude and direction regions
+	for (int i = 0; i < 16; ++i)
+	{
+		uo = (sharedPtPos[i][1] - 0.5) / (float)w;
+		vo = (sharedPtPos[i][2] - 0.5) / (float)h;
+		u_ = uo - 7.5 + tx;
+		v_ = vo - 7.5 + ty;
+		u = (u_ - uo) * cosf(sharedPtOrient[i]) + (v_ - vo) * sinf(sharedPtOrient[i]) + uo;
+		v = (v_ - vo) * cosf(sharedPtOrient[i]) - (u_ - uo) * sinf(sharedPtOrient[i]) + vo;
+		sharedMag[i][cuda2DTo1D(tx, ty, bDimX)] = tex2D<float>(texObjMag, u, v);
+		sharedDir[i][cuda2DTo1D(tx, ty, bDimX)] = tex2D<float>(texObjDir, u, v);
+	}
+	__syncthreads();
 
+	// 	Multiply gaussian wnd
+	for (int i = 0; i < 16; ++i)
+	{
+		sharedMag[i][cuda2DTo1D(tx, ty, bDimX)] *= c_GaussianWnd[ tx + scaleIdx*WND_KERNEL_SIZE];
+		sharedMag[i][cuda2DTo1D(ty, tx, bDimX)] *= c_GaussianWnd[ tx + scaleIdx*WND_KERNEL_SIZE];
+	}
+	__syncthreads();
+
+	//	Initialize histogram
+	for (int i = 0; i < 16; ++i)
+	{
+		if (tIdx < 128)
+			sharedHist[i][tIdx] = 0;
+	}
+	__syncthreads();
+
+	//	Compute patch histogram
+	for (int i = 0; i < 16; ++i)
+	{
+		binVal = cudaAssignBin(sharedDir[i][cuda2DTo1D(tx, ty, bDimX)], 8);
+		sbIdxX = tx/4;
+		sbIdxY = ty/4;
+		atomicAdd(&sharedHist[i][binVal + 8*sbIdxX + 32*sbIdxY], sharedMag[i][cuda2DTo1D(tx, ty, bDimX)]);
+	}
+	__syncthreads();
+
+	// Compute descriptor
+	for (int i = 0; i < 16; ++i)
+	{
+		if (tIdx < 128)
+		{
+			// 	Normalize histogram
+			sum = shflsum(sharedHist[i]);
+			__syncthreads();
+			if (tIdx%32 == 0)
+				atomicAdd(&sharedHistSum, sum);
+			__syncthreads();
+			sharedHist[i][tIdx] /= sharedHistSum;
+
+			//	Clamp histogram to 0.2
+			if (sharedHist[i][tIdx] > 0.2)
+				sharedHist[i][tIdx] = 0.2;
+			__syncthreads();
+
+			// 	Re-normalize histogram
+			sum = shflsum(sharedHist[i]);
+			__syncthreads();
+			if (tIdx%32 == 0)
+				atomicAdd(&sharedHistSum, sum);
+			__syncthreads();
+			sharedHist[i][tIdx] /= sharedHistSum;
+		}
+	}
+
+	//	Save descriptor
+	for (int i = 0; i < tPtCnt; ++i)
+	{
+		if (tIdx < 128 && d_PointStartIdx[streamIdx] + lPtIdx < MAX_POINTCOUNT )
+		{
+			pt[d_PointStartIdx[streamIdx] + lPtIdx].orientation = sharedHist[i][tIdx];
+		}
+	}
 }
 __global__ void transformKernel(float* output, cudaTextureObject_t texObj, int w, int p, int h, float theta)
 {
@@ -115,10 +214,16 @@ __global__ void transformKernel(float* output, cudaTextureObject_t texObj, int w
 
 	// Transform coordinates
 	// subtract normallized point position and add it later
-	u -= 0.0f;
-	v -= 0.0f;
-	float tu = u * cosf(theta) - v * sinf(theta) + 0.0f;
-	float tv = v * cosf(theta) + u * sinf(theta) + 0.0f;
+	float xpos = 400.0;
+	float ypos = 320.0;
+	float upvt = ( xpos - 0.5 )/w;
+	float vpvt = ( ypos - 0.5 )/h;
+//	float uNew = (tu - upvt) * cosf(theta) + (tv - vpvt) * sinf(theta) + upvt;
+//	float vNew = (tv - vpvt) * cosf(theta) - (tu - upvt) * sinf(theta) + vpvt;
+	u -= upvt;
+	v -= vpvt;
+	float tu = u * cosf(theta) - v * sinf(theta) + upvt;
+	float tv = v * cosf(theta) + u * sinf(theta) + vpvt;
 	// Read from texture and write to global memory
 	if(gx < w && gy < h)
 		output[gy * p + gx] = tex2D<float>(texObj, tu, tv);
@@ -127,6 +232,13 @@ __global__ void transformKernel(float* output, cudaTextureObject_t texObj, int w
 __global__ void warpMaxKernel(float *d_data)
 {
 //	shflmax(d_data, d_data);
+	int tx = threadIdx.x;
+	int ty = threadIdx.y;
+	int bDimX = blockDim.x;
+	int tIdx = cuda2DTo1D(tx, ty, bDimX);
+	float sum = shflsum(d_data);
+	if( tIdx == 0)
+		printf("sum = %f\n", sum);
 }
 
 __global__ void findExtremaKernel( SiftPoint *pt, float *gDoG, float *gHessian
