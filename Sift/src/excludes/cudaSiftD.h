@@ -26,8 +26,8 @@ __constant__ float c_ExtremaThreshold;
 __constant__ unsigned int c_MaxPointCount;
 
 // static memory variables
-__device__ unsigned int d_PointCount[BATCH_SIZE];
-__device__ unsigned int d_PointStartIdx[BATCH_SIZE];
+__device__ unsigned int d_PointCount[2];
+__device__ unsigned int d_PointStartIdx[2];
 // Define device free functions
 __device__ int cudaIDivUpOdd( int num, int den )
 {

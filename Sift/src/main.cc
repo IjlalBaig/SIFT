@@ -8,15 +8,15 @@
 #include <fstream>
 #include <iomanip>
 
-using namespace std;
+//using namespace std;
 int main( int argc, char **argv )
 {
 	// 	read argv[1] for img src locations
-    ifstream inFile;
+    std::ifstream inFile;
     inFile.open( argv[1] );
     if (!inFile)
     {
-        cout << "Unable to open file";
+        std::cout << "Unable to open file";
         exit(1); // terminate with error
     }
 
@@ -33,19 +33,11 @@ int main( int argc, char **argv )
     {
     	std::string srcPath[nImgs];
 		for (int i = 0; std::getline( inFile, path ); ++i)
-		{
 			srcPath[i] = path;
-			std::cout << srcPath[i] << std::endl;
-		}
-
-		//	define resultant image path
-		std::string dstPath( "result/result.ppm" );
-
+		std::string dstPath(argv[2]);
 		// 	launch sift
-		sift( dstPath, srcPath, nImgs=1 );
+		sift( dstPath, srcPath, nImgs );
     }
     inFile.close();
-
-
-	return 0;
+    return 0;
 }

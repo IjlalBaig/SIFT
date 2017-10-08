@@ -203,43 +203,6 @@ __global__ void DescriptorKernel( SiftPoint *pt, cudaTextureObject_t texObjMag, 
 		}
 	}
 }
-__global__ void transformKernel(float* output, cudaTextureObject_t texObj, int w, int p, int h, float theta)
-{
-	// Calculate normalized texture coordinates
-
-	unsigned int gx = blockIdx.x * blockDim.x + threadIdx.x;
-	unsigned int gy = blockIdx.y * blockDim.y + threadIdx.y;
-	float u = gx / (float)w;
-	float v = gy / (float)h;
-
-	// Transform coordinates
-	// subtract normallized point position and add it later
-	float xpos = 400.0;
-	float ypos = 320.0;
-	float upvt = ( xpos - 0.5 )/w;
-	float vpvt = ( ypos - 0.5 )/h;
-//	float uNew = (tu - upvt) * cosf(theta) + (tv - vpvt) * sinf(theta) + upvt;
-//	float vNew = (tv - vpvt) * cosf(theta) - (tu - upvt) * sinf(theta) + vpvt;
-	u -= upvt;
-	v -= vpvt;
-	float tu = u * cosf(theta) - v * sinf(theta) + upvt;
-	float tv = v * cosf(theta) + u * sinf(theta) + vpvt;
-	// Read from texture and write to global memory
-	if(gx < w && gy < h)
-		output[gy * p + gx] = tex2D<float>(texObj, tu, tv);
-}
-
-__global__ void warpMaxKernel(float *d_data)
-{
-//	shflmax(d_data, d_data);
-	int tx = threadIdx.x;
-	int ty = threadIdx.y;
-	int bDimX = blockDim.x;
-	int tIdx = cuda2DTo1D(tx, ty, bDimX);
-	float sum = shflsum(d_data);
-	if( tIdx == 0)
-		printf("sum = %f\n", sum);
-}
 
 __global__ void findExtremaKernel( SiftPoint *pt, float *gDoG, float *gHessian
 								, int w, int p, int h
@@ -317,7 +280,7 @@ __global__ void findExtremaKernel( SiftPoint *pt, float *gDoG, float *gHessian
 				&& pxRank == 9.0
 				&& trace*trace/det < (pow( R_THRESH * 1, 2 ))/R_THRESH
 				&& abs(pxVal) > EXTREMA_THRESH
-				&&  d_PointCount[streamIdx] < c_MaxPointCount)
+				&&  d_PointCount[streamIdx] < MAX_POINTCOUNT)
 			{
 				ptCount = atomicAdd(&d_PointCount[streamIdx], 1);
 				if(ptCount < MAX_POINTCOUNT)
@@ -564,17 +527,6 @@ __global__ void copyKernel( float *gDst, const float *gSrc, int w, int p, int h 
 	gDst[gIdx] = gSrc[gIdx];
 }
 
-__global__ void subtractKernel( float *gDst, const float *gSrc1, const float *gSrc2, int w, int p, int h )
-{
-	int gx = threadIdx.x + blockDim.x * blockIdx.x;
-	int gy = threadIdx.y + blockDim.y * blockIdx.y;
-	int gIdx = gx + p * gy;
-
-	// Compute difference
-	if (gx < w && gy < h)
-		gDst[gIdx] = gSrc1[gIdx] - gSrc2[gIdx];
-}
-
 __global__ void resizeKernel( float *gDst, float *gSrc, int w, int p, int h )
 {
 	int gx = threadIdx.x + blockDim.x * blockIdx.x;
@@ -590,91 +542,4 @@ __global__ void resizeKernel( float *gDst, float *gSrc, int w, int p, int h )
 		int gIdx_ = gx_ + gy_ * p_;
 		gDst[gIdx_] = gSrc[gIdx];
 	}
-}
-
-
-//__global__ void kernelGaussianSize()
-//{
-//	int tx = threadIdx.x;
-//	printf( "scale %d\t:\t%d\n", tx, c_GaussianBlurSize[tx] );
-//	if (tx == 0)
-//		printf( "%d\n", c_MaxGaussianBlurSize );
-//}
-
-__global__ void kernelGaussianVector()
-{
-	int tx = threadIdx.x;
-	printf( "thread %d\t:\t%f\n", tx, c_GaussianBlur[tx] );
-}
-
-__global__ void kernel()
-{
-	int count = 0;
-	for (int i = 0; i < 5000; ++i)
-		count++;
-	printf( "hi this is thread:%d\t%d\n", threadIdx.x, count );
-}
-
-__global__ void shKernel( float *data
-						, int w, int p, int h
-						, const int nTilesX, const int nTilesY
-						, const int apronLeft, const int apronRight, const int apronUp, const int apronDown )
-{
-	extern __shared__ float shared[];
-	int tx = threadIdx.x;
-	int ty = threadIdx.y;
-	int bDimX = blockDim.x;
-	int bDimY = blockDim.y;
-	int bIdxX = blockIdx.x;
-	int bIdxY = blockIdx.y;
-	int gx = tx + bDimX * bIdxX;
-	int gy = ty + bDimY * bIdxY;
-//	if (gx == 0 && gy == 0)
-//	{
-//		for (int j = 0; j < h; ++j)
-//		{
-//			for (int i = 0; i < p; ++i)
-//			{
-//				printf( "%f  ", data[cuda2DTo1D( i, j, p )] );
-//			}
-//			printf( "\n" );
-//		}
-//
-//	}
-	cudaMemcpyGlobalToShared( shared, data
-							, tx, ty, gx, gy
-							, bDimX, bDimY, w, p, h
-							, nTilesX, nTilesY
-							, apronLeft, apronRight, apronUp, apronDown, 0 );
-
-	__syncthreads();
-	if (gx == 0 && gy == 0)
-	{
-		for (int j = 0; j < apronUp +  bDimY*nTilesY + apronDown; ++j)
-		{
-			for (int i = 0; i < apronLeft + bDimX*nTilesX + apronRight; ++i)
-			{
-				printf( "%f  ", shared[cuda2DTo1D( i, j, apronLeft + bDimX*nTilesX + apronRight )] );
-			}
-			printf( "\n" );
-		}
-	}
-
-	cudaMemcpySharedToGlobal( data, shared
-							, tx, ty, gx, gy
-							, bDimX, bDimY, w, p, h
-							, nTilesX, nTilesY
-							, apronLeft, apronRight, apronUp, apronDown, 0 );
-//	if (gx == 0 && gy == 0)
-//	{
-//		for (int j = 0; j < h; ++j)
-//		{
-//			for (int i = 0; i < w; ++i)
-//			{
-//				printf( "%f  ", data[cuda2DTo1D( i, j, p)] );
-//			}
-//			printf( "\n" );
-//		}
-//
-//	}
 }
