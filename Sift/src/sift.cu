@@ -4,7 +4,55 @@
 #include "cudaSiftH.h"
 #include "cudaImage.h"
 
-int sift( std::string dstPath, std::string *srcPath)
+SiftData::SiftData():
+	numPts( 0 ), maxPts( 0 ), h_data( NULL ), d_data( NULL ),
+	d_internalAlloc( false ), h_internalAlloc( false )
+{
+
+}
+SiftData::~SiftData()
+{
+	if(d_internalAlloc && d_data!=NULL)
+		CUDA_SAFECALL( cudaFree( d_data ) );
+	d_data = NULL;
+	if(h_internalAlloc && h_data!=NULL)
+		free( h_data );
+	h_data = NULL;
+}
+void SiftData::Allocate(int max, SiftPoint *d_ptr, SiftPoint *h_ptr)
+{
+	numPts = 0;
+	maxPts = max;
+	d_data = d_ptr;
+	h_data = h_ptr;
+	if (d_ptr==NULL)
+	{
+		CUDA_SAFECALL( cudaMalloc( (void **)&d_data, (size_t)(maxPts * sizeof( SiftPoint )) ) );
+		if (d_data==NULL)
+			printf( "Failed to allocate Sift device data\n" );
+		d_internalAlloc = true;
+	}
+	if (h_ptr==NULL)
+	{
+		h_data = (SiftPoint *)malloc( maxPts * sizeof( SiftPoint ) );
+		if (h_data==NULL)
+			printf( "Failed to allocate Sift host data\n" );
+		h_internalAlloc = true;
+	}
+}
+double SiftData::Upload(cudaStream_t stream)
+{
+	if (d_data!=NULL && h_data!=NULL)
+		CUDA_SAFECALL( cudaMemcpyAsync( (void *)d_data, (const void *)h_data, maxPts * sizeof( SiftPoint ), cudaMemcpyHostToDevice, stream ) );
+	return 0.0;
+}
+double SiftData::Readback(cudaStream_t stream)
+{
+	CUDA_SAFECALL( cudaMemcpyAsync( (void *)h_data, (const void *)d_data, maxPts * sizeof( SiftPoint ), cudaMemcpyDeviceToHost, stream ) );
+	return 0.0;
+}
+
+int sift( std::string dstPath, std::string *srcPath, int nImgs)
 {
 //	cudaStream_t stream;
 //	CUDA_SAFECALL( cudaStreamCreate(&stream) );
@@ -64,7 +112,7 @@ int sift( std::string dstPath, std::string *srcPath)
 
 		//	Copy data to result image
 		CUDA_SAFECALL( cudaMemcpy2DAsync( (void *)matRes.data, (size_t)(w*sizeof( float )), (const void *)d_res, (size_t)(p* sizeof( float )), (size_t)(w*sizeof( float )), (size_t)h, cudaMemcpyDeviceToHost, stream[i]) );
-		image::imshow( matRes );
+//		image::imshow( matRes );
 //			int gDim = cuRes.pitch*cuRes.height;
 //		copyDeviceData(cuRes.d_data, 4*gDim + d_multiBlur[i], cuRes.width, cuRes.pitch, cuRes.height, stream[i] );
 		//	Free pointers
@@ -82,60 +130,11 @@ int sift( std::string dstPath, std::string *srcPath)
 	//	Show result
 	for (int i = 0; i < 1200; ++i)
 		image::drawPoint( matImg[0], siftData[0].h_data[i].xpos, siftData[0].h_data[i].ypos, siftData[0].h_data[i].scale, siftData[0].h_data[i].orientation);
-//	image::imshow( matImg[0] );
+	image::imshow( matImg[0] );
 	//	Destroy cuda streams for batchSize
 	for (int i = 0; i < BATCH_SIZE; ++i)
 		CUDA_SAFECALL( cudaStreamDestroy(stream[i]));
 	return 0;
 }
 
-SiftData::SiftData():
-	numPts( 0 ), maxPts( 0 ), h_data( NULL ), d_data( NULL ),
-	d_internalAlloc( false ), h_internalAlloc( false )
-{
 
-}
-SiftData::~SiftData()
-{
-	if(d_internalAlloc && d_data!=NULL)
-		CUDA_SAFECALL( cudaFree( d_data ) );
-	d_data = NULL;
-	if(h_internalAlloc && h_data!=NULL)
-		free( h_data );
-	h_data = NULL;
-}
-
-void SiftData::Allocate(int max, SiftPoint *d_ptr, SiftPoint *h_ptr)
-{
-	numPts = 0;
-	maxPts = max;
-	d_data = d_ptr;
-	h_data = h_ptr;
-	if (d_ptr==NULL)
-	{
-		CUDA_SAFECALL( cudaMalloc( (void **)&d_data, (size_t)(maxPts * sizeof( SiftPoint )) ) );
-		if (d_data==NULL)
-			printf( "Failed to allocate Sift device data\n" );
-		d_internalAlloc = true;
-	}
-	if (h_ptr==NULL)
-	{
-		h_data = (SiftPoint *)malloc( maxPts * sizeof( SiftPoint ) );
-		if (h_data==NULL)
-			printf( "Failed to allocate Sift host data\n" );
-		h_internalAlloc = true;
-	}
-}
-
-double SiftData::Upload(cudaStream_t stream)
-{
-	if (d_data!=NULL && h_data!=NULL)
-		CUDA_SAFECALL( cudaMemcpyAsync( (void *)d_data, (const void *)h_data, maxPts * sizeof( SiftPoint ), cudaMemcpyHostToDevice, stream ) );
-	return 0.0;
-}
-
-double SiftData::Readback(cudaStream_t stream)
-{
-	CUDA_SAFECALL( cudaMemcpyAsync( (void *)h_data, (const void *)d_data, maxPts * sizeof( SiftPoint ), cudaMemcpyDeviceToHost, stream ) );
-	return 0.0;
-}

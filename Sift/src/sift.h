@@ -29,6 +29,6 @@ class SiftData {
 		double Readback(cudaStream_t stream = 0 );
 };
 
-int sift( std::string dstPath, std::string *srcPath);
+int sift( std::string dstPath, std::string *srcPath, int nImgs);
 
 #endif
