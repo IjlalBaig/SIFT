@@ -1,6 +1,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <iomanip>
 #include "sift.h"
 #include "utils.h"
 #include "cudaUtils.h"
@@ -55,19 +56,18 @@ double SiftData::Readback(cudaStream_t stream)
 	return 0.0;
 }
 
-int sift( std::string dstPath, std::string *srcPath, const int nImgs)
+int sift( std::string dstPath, std::string *srcPath, int nImgs)
 {
 	int nImgProcessed = 0;
-	int nImgQueue = 0;
+
 	while (nImgs > nImgProcessed)
 	{
 		//	Update image queue count
-		nImgQueue = (nImgs - nImgProcessed > 1) ? (2):(1);
-
+		int nImgQueue = (nImgs - nImgProcessed > 1) ? (2):(1);
 		//	Load image queued to Mat object
-		cv::Mat matImg[nImgQueue];
-		int width[nImgQueue];
-		int height[nImgQueue];
+		cv::Mat matImg[2];
+		int width[2];
+		int height[2];
 
 		//	Read in image dimensions
 		for (int i = 0; i < nImgQueue; ++i)
@@ -153,17 +153,19 @@ int sift( std::string dstPath, std::string *srcPath, const int nImgs)
 			std::string dstFile(dstPath + "/" + srcFile + ".sift.txt");
 			std::ofstream outFile(dstFile.c_str());
 
-			for (int j = 0; j < MAX_POINTCOUNT; ++j)
+			for (int j = 0; j < getPointCount( i )-1 ; ++j)
 			{
-				outFile << siftData[i].h_data[j].xpos << "\t";
-				outFile << siftData[i].h_data[j].ypos << "\t";
-				outFile << siftData[i].h_data[j].scale << "\t";
-				outFile << siftData[i].h_data[j].orientation << "\t";
+				outFile << std::fixed << std::setprecision(1) << float(siftData[i].h_data[j].xpos) << "\t";
+				outFile << std::fixed << std::setprecision(1) << float(siftData[i].h_data[j].ypos) << "\t";
+				outFile << std::fixed << std::setprecision(3) << float(siftData[i].h_data[j].scale) << "\t";
+				outFile << std::fixed << std::setprecision(3) << float(siftData[i].h_data[j].orientation) << "\t";
+
+				float sum = 0.0;
 				for (int k = 0; k < 128; ++k)
-					outFile << siftData[i].h_data[j].data[k] << " ";
+					outFile << std::fixed << std::setprecision(6)<< siftData[i].h_data[j].data[k] << " ";
 				outFile << std::endl;
 				image::drawPoint( matImg[i], siftData[i].h_data[j].xpos, siftData[i].h_data[j].ypos, siftData[i].h_data[j].scale, siftData[i].h_data[j].orientation);
-//
+
 			}
 			for (int i = 0; i < nImgQueue; ++i)
 				image::imshow( matImg[i] );

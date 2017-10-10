@@ -10,9 +10,6 @@ void extractSift(SiftPoint *siftPt, float *d_res, float *d_src, int width, int p
 {
 
 	int ptCount = getPointCount(streamIdx);
-	/*
-	 *
-	 */printf("%d\n", ptCount);
 	if (ptCount < MAX_POINTCOUNT)
 	{
 		//	Allocate octave pointers
@@ -38,7 +35,7 @@ void extractSift(SiftPoint *siftPt, float *d_res, float *d_src, int width, int p
 		computeGradient( d_multiGradient, d_multiBlur, width, pitch, height, stream );
 
 		//	Compute octave SiftData
-		computeOctaveSift( siftPt, d_multiDoG, d_multiHessian, d_multiGradient, width, pitch, height, stream, streamIdx );
+		computeOctaveSift( siftPt, d_multiDoG, d_multiHessian, d_multiGradient, width, pitch, height, stream, streamIdx, octaveIdx );
 
 		//	Copy back result
 		/*
@@ -73,7 +70,7 @@ void extractSift(SiftPoint *siftPt, float *d_res, float *d_src, int width, int p
 		freeOctave(d_multiBlur, d_multiDoG, d_multiHessian, d_multiGradient );
 	}
 }
-void computeOctaveSift( SiftPoint *pt, float *src_DoG, float *src_Hessian, float *src_Gradient, int width, int pitch, int height, cudaStream_t &stream, int streamIdx )
+void computeOctaveSift( SiftPoint *pt, float *src_DoG, float *src_Hessian, float *src_Gradient, int width, int pitch, int height, cudaStream_t &stream, int streamIdx, int octaveIdx )
 {
 	// 	Get max apron Size
 	int maxApron = 1;
@@ -94,34 +91,40 @@ void computeOctaveSift( SiftPoint *pt, float *src_DoG, float *src_Hessian, float
 	int scalePointCount = 0;
 	for (int i = 0; i < N_SCALES; ++i)
 	{
-		ptCountStart = updatePtStartIdx( streamIdx );
-		findExtremaKernel<<< gridSizeXtr, blockSizeXtr, sDimX*sDimY*sizeof( float ), stream >>>( pt, src_DoG + i*gDim, src_Hessian + i*nUnitsPerHessian*gDim
+		if (getPointCount( streamIdx ) < MAX_POINTCOUNT )
+		{
+			ptCountStart = updatePtStartIdx( streamIdx );
+			findExtremaKernel<<< gridSizeXtr, blockSizeXtr, sDimX*sDimY*sizeof( float ), stream >>>( pt, src_DoG + i*gDim, src_Hessian + i*nUnitsPerHessian*gDim
 																					, width, pitch, height
 																					, nTilesX, nTilesY
 																					, maxApron, maxApron, maxApron, maxApron
 																					, bankOffset, streamIdx );
-		scalePointCount =  getPointCount( streamIdx ) - ptCountStart;
-		dim3 blockSizeOrient(16,16,1);
-		dim3 gridSizeOrient( iDivUp(scalePointCount, ORIENT_BUFFER ), 1, 1 );
-		OrientationKernel<<< gridSizeOrient, blockSizeOrient, 0, stream >>>( pt, src_Gradient + i*nUnitsPerGradient*gDim
-																		, width, pitch, height
-																		, scalePointCount, i, streamIdx);
-		scalePointCount =  getPointCount( streamIdx ) - ptCountStart;
+			clampPtCount( streamIdx );
+			scalePointCount =  getPointCount( streamIdx ) - ptCountStart;
+			dim3 blockSizeOrient(16,16,1);
+			dim3 gridSizeOrient( iDivUp(scalePointCount, ORIENT_BUFFER ), 1, 1 );
+			float k = pow(2,0.5);
+			float scale = pow(k, i + N_SCALES*octaveIdx)*SIGMA;
+			OrientationKernel<<< gridSizeOrient, blockSizeOrient, 0, stream >>>( pt, src_Gradient + i*nUnitsPerGradient*gDim
+																			, width, pitch, height
+																			, scalePointCount, i, scale , streamIdx);
+			scalePointCount =  getPointCount( streamIdx ) - ptCountStart;
 
-		cudaArray *cuArrayMag;
-		cudaArray *cuArrayDir;
-		cudaTextureObject_t texObjMag;
-		cudaTextureObject_t texObjDir;
+			cudaArray *cuArrayMag;
+			cudaArray *cuArrayDir;
+			cudaTextureObject_t texObjMag;
+			cudaTextureObject_t texObjDir;
 
-		setTexture( cuArrayMag, texObjMag, src_Gradient + i*nUnitsPerGradient*gDim, width, pitch, height );
-		setTexture( cuArrayDir, texObjDir, src_Gradient + (i*nUnitsPerGradient + 1)*gDim, width, pitch, height );
+			setTexture( cuArrayMag, texObjMag, src_Gradient + i*nUnitsPerGradient*gDim, width, pitch, height );
+			setTexture( cuArrayDir, texObjDir, src_Gradient + (i*nUnitsPerGradient + 1)*gDim, width, pitch, height );
 
 
-		DescriptorKernel<<< gridSizeOrient, blockSizeOrient, 0, stream >>>(pt, texObjMag, texObjDir
-																		, width, pitch, height
-																		, scalePointCount, i, streamIdx);
-		freeTexture(cuArrayMag, texObjMag);
-		freeTexture(cuArrayDir, texObjDir);
+			DescriptorKernel<<< gridSizeOrient, blockSizeOrient, 0, stream >>>(pt, texObjMag, texObjDir
+																			, width, pitch, height
+																			, scalePointCount, i, streamIdx);
+			freeTexture(cuArrayMag, texObjMag);
+			freeTexture(cuArrayDir, texObjDir);
+		}
 	}
 }
 
@@ -338,5 +341,18 @@ int updatePtStartIdx( int streamIdx )
 	CUDA_SAFECALL( cudaMemcpy(&d_ptrStartIdx[streamIdx], &d_ptrPointCount[streamIdx], sizeof( unsigned int ), cudaMemcpyDeviceToDevice ) );
 	int result = -1;
 	CUDA_SAFECALL( cudaMemcpy(&result, &d_ptrPointCount[streamIdx], sizeof( unsigned int ), cudaMemcpyDeviceToHost ) );
+	return result;
+}
+int clampPtCount( int streamIdx )
+{
+	unsigned int *d_ptrPointCount;
+	CUDA_SAFECALL( cudaGetSymbolAddress( (void **) &d_ptrPointCount, d_PointCount ) );
+	int result = -1;
+	CUDA_SAFECALL( cudaMemcpy(&result, &d_ptrPointCount[streamIdx], sizeof( unsigned int ), cudaMemcpyDeviceToHost ) );
+	if (result >= MAX_POINTCOUNT)
+	{
+		result = MAX_POINTCOUNT;
+		CUDA_SAFECALL( cudaMemcpy(&d_ptrPointCount[streamIdx], &result,  sizeof( unsigned int ), cudaMemcpyHostToDevice ) );
+	}
 	return result;
 }

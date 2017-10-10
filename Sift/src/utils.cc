@@ -34,10 +34,27 @@ int image::imsave( const std::string path, cv::Mat &img )
 }
 int image::drawPoint( cv:: Mat &img, float x, float y, float scale, float orientation )
 {
-	float rho = scale;
-	cv::Point pt1 = cv::Point( x, y );
-	cv::Point pt2 = cylindrical2Catesian( pt1, rho, -orientation );	// orientation is clockwise
-	cv::circle( img, pt1, rho, cv::Scalar( 0, 255, 255 ), 1, 8, 0 );
+	/*
+	 *
+	 *
+	 */
+	int subsample = 0;
+	float scale_ = scale/1.6;
+	if (scale_ >= 0.0 && scale_ < 2.0)
+		subsample = 1;
+	else if (scale_ >= 2.0 && scale_ < 4.0)
+		subsample = 2;
+	else if (scale_ >= 4.0 && scale_ < 8.0)
+		subsample = 4;
+	else if (scale_ >= 8.0 && scale_ < 16.0)
+		subsample = 8;
+	/*
+	 *
+	 *
+	 */
+	cv::Point pt1 = cv::Point( x*subsample, y*subsample );
+	cv::Point pt2 = cylindrical2Catesian( pt1, subsample*8, -orientation );	// orientation is clockwise
+	cv::circle( img, pt1, subsample*8, cv::Scalar( 0, 255, 255 ), 1, 8, 0 );
 	cv::line( img, pt1, pt2, cv::Scalar( 0, 255, 255 ), 1, 8, 0 );
 	return 0;
 }
@@ -57,18 +74,6 @@ int imfilter::gaussian1D( float *kernelPtr, float sigma, int kernelSize )
 	// Normalize kernel
 	for (int i = 0; i < kernelSize; ++i)
 		kernelPtr[i] /= sum;
-	return 0;
-}
-int imfilter::gaussian2D( float *kernelPtr, float sigma )
-{
-//	float kernelSize = gaussianSize( sigma );
-//	float kernel1D[int( kernelSize )];
-//	gaussian1D(kernel1D, sigma);
-//	for (int j = 0; j < kernelSize; ++j)
-//	{
-//		for (int i = 0; i < kernelSize; ++i)
-//			kernelPtr[int( kernelSize )*j + i] = kernel1D[i]*kernel1D[j];
-//	}
 	return 0;
 }
 /*

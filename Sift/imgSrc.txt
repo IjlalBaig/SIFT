@@ -1,1 +1,2 @@
-img/img4.jpg
+img/img1.ppm
+img/img2.ppm

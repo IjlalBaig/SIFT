@@ -7,8 +7,8 @@
 #include <iostream>
 #include <fstream>
 #include <iomanip>
+#include <cmath>
 
-//using namespace std;
 int main( int argc, char **argv )
 {
 	// 	read argv[1] for img src locations

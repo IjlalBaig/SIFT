@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include "../utils.h"
 // Define sift constants
-#define SIGMA 2.0f
+#define SIGMA 1.6f
 #define MIN_THRESH 15.0f
 #define R_THRESH 10.0f
 

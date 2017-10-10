@@ -16,14 +16,15 @@ __global__ void subtractKernel( float *gDst, float *gSrc1, float *gSrc2
 
 __global__ void OrientationKernel( SiftPoint *pt, float *gGradient
 								, int w, int p, int h
-								, const int scalePtCnt, const int scaleIdx, const int streamIdx )
+								, const int scalePtCnt, const int scaleIdx, const float scale
+								, const int streamIdx )
 {
 	int tx = threadIdx.x;
 	int ty = threadIdx.y;
 	int bDimX = blockDim.x;
 	int bIdxX = blockIdx.x;
 	int tIdx = cuda2DTo1D(tx, ty, bDimX);
-	int lPtIdx = tIdx + bIdxX*ORIENT_BUFFER;
+	int lPtIdx = tIdx + bIdxX*16;
 	int binVal = 0;
 	__shared__ float sharedPtPos[ORIENT_BUFFER][2];
 	__shared__ float sharedMag[ORIENT_BUFFER][16*16];
@@ -38,16 +39,16 @@ __global__ void OrientationKernel( SiftPoint *pt, float *gGradient
 	//	Load pt positions
 	if (tIdx < tPtCnt && d_PointStartIdx[streamIdx] + lPtIdx < MAX_POINTCOUNT)
 	{
-		sharedPtPos[tIdx][1] =  pt[ d_PointStartIdx[streamIdx] + lPtIdx].xpos;
-		sharedPtPos[tIdx][2] =  pt[ d_PointStartIdx[streamIdx] + lPtIdx].ypos;
+		sharedPtPos[tIdx][0] =  pt[ d_PointStartIdx[streamIdx] + lPtIdx].xpos;
+		sharedPtPos[tIdx][1] =  pt[ d_PointStartIdx[streamIdx] + lPtIdx].ypos;
 	}
 	__syncthreads();
 
 	// 	Load gradient magnitude and direction regions
 	for (int i = 0; i < ORIENT_BUFFER; ++i)
 	{
-		sharedMag[i][cuda2DTo1D(tx, ty, bDimX)] = gGradient[cuda2DTo1D(sharedPtPos[i][1] - 7 + tx, sharedPtPos[i][2] - 7 + ty, p)];
-		sharedDir[i][cuda2DTo1D(tx, ty, bDimX)] = (gGradient + p*h)[cuda2DTo1D(sharedPtPos[i][1] - 7 + tx, sharedPtPos[i][2] - 7 + ty, p)];
+		sharedMag[i][cuda2DTo1D(tx, ty, bDimX)] = gGradient[cuda2DTo1D(sharedPtPos[i][0] - 7 + tx, sharedPtPos[i][1] - 7 + ty, p)];
+		sharedDir[i][cuda2DTo1D(tx, ty, bDimX)] = (gGradient + p*h)[cuda2DTo1D(sharedPtPos[i][0] - 7 + tx, sharedPtPos[i][1] - 7 + ty, p)];
 	}
 	__syncthreads();
 
@@ -83,8 +84,8 @@ __global__ void OrientationKernel( SiftPoint *pt, float *gGradient
 	//	Save orientation and scale
 	if (tIdx < tPtCnt && d_PointStartIdx[streamIdx] + lPtIdx < MAX_POINTCOUNT )
 	{
-		pt[d_PointStartIdx[streamIdx] + lPtIdx].orientation = 360/32*sharedHistMaxIdx[tIdx];
-		pt[d_PointStartIdx[streamIdx] + lPtIdx].scale = 10;
+		pt[d_PointStartIdx[streamIdx] + lPtIdx].orientation = 360.0f/32.0f*sharedHistMaxIdx[tIdx];
+		pt[d_PointStartIdx[streamIdx] + lPtIdx].scale = scale;
 	}
 }
 
@@ -120,17 +121,17 @@ __global__ void DescriptorKernel( SiftPoint *pt, cudaTextureObject_t texObjMag, 
 	//	Load pt positions
 	if (tIdx < tPtCnt && d_PointStartIdx[streamIdx] + lPtIdx < MAX_POINTCOUNT)
 	{
-		sharedPtPos[tIdx][1] =  pt[ d_PointStartIdx[streamIdx] + lPtIdx].xpos;
-		sharedPtPos[tIdx][2] =  pt[ d_PointStartIdx[streamIdx] + lPtIdx].ypos;
+		sharedPtPos[tIdx][0] =  pt[ d_PointStartIdx[streamIdx] + lPtIdx].xpos;
+		sharedPtPos[tIdx][1] =  pt[ d_PointStartIdx[streamIdx] + lPtIdx].ypos;
 		sharedPtOrient[tIdx] = pt[ d_PointStartIdx[streamIdx] + lPtIdx].orientation;
 	}
 	__syncthreads();
 
 	// 	Load rotated gradient magnitude and direction regions
-	for (int i = 0; i < 16; ++i)
+	for (int i = 0; i < tPtCnt; ++i)
 	{
-		uo = (sharedPtPos[i][1] - 0.5) / (float)w;
-		vo = (sharedPtPos[i][2] - 0.5) / (float)h;
+		uo = (sharedPtPos[i][0] - 0.5) / (float)w;
+		vo = (sharedPtPos[i][1] - 0.5) / (float)h;
 		u_ = uo - 7.5 + tx;
 		v_ = vo - 7.5 + ty;
 		u = (u_ - uo) * cosf(sharedPtOrient[i]) + (v_ - vo) * sinf(sharedPtOrient[i]) + uo;
@@ -139,7 +140,6 @@ __global__ void DescriptorKernel( SiftPoint *pt, cudaTextureObject_t texObjMag, 
 		sharedDir[i][cuda2DTo1D(tx, ty, bDimX)] = tex2D<float>(texObjDir, u, v);
 	}
 	__syncthreads();
-
 	// 	Multiply gaussian wnd
 	for (int i = 0; i < 16; ++i)
 	{
@@ -166,8 +166,8 @@ __global__ void DescriptorKernel( SiftPoint *pt, cudaTextureObject_t texObjMag, 
 	}
 	__syncthreads();
 
-	// Compute descriptor
-	for (int i = 0; i < 16; ++i)
+	//	Compute descriptor
+	for (int i = 0; i < tPtCnt; ++i)
 	{
 		if (tIdx < 128)
 		{
@@ -175,10 +175,12 @@ __global__ void DescriptorKernel( SiftPoint *pt, cudaTextureObject_t texObjMag, 
 			sum = shflsum(sharedHist[i]);
 			__syncthreads();
 			if (tIdx%32 == 0)
+			{
 				atomicAdd(&sharedHistSum, sum);
+			}
 			__syncthreads();
 			sharedHist[i][tIdx] /= sharedHistSum;
-
+			__syncthreads();
 			//	Clamp histogram to 0.2
 			if (sharedHist[i][tIdx] > 0.2)
 				sharedHist[i][tIdx] = 0.2;
@@ -186,6 +188,7 @@ __global__ void DescriptorKernel( SiftPoint *pt, cudaTextureObject_t texObjMag, 
 
 			// 	Re-normalize histogram
 			sum = shflsum(sharedHist[i]);
+			sharedHistSum = 0.0;
 			__syncthreads();
 			if (tIdx%32 == 0)
 				atomicAdd(&sharedHistSum, sum);
@@ -197,11 +200,13 @@ __global__ void DescriptorKernel( SiftPoint *pt, cudaTextureObject_t texObjMag, 
 	//	Save descriptor
 	for (int i = 0; i < tPtCnt; ++i)
 	{
-		if (tIdx < 128 && d_PointStartIdx[streamIdx] + lPtIdx < MAX_POINTCOUNT )
+		if (tIdx < 128 )
 		{
-			pt[d_PointStartIdx[streamIdx] + lPtIdx].orientation = sharedHist[i][tIdx];
+			pt[d_PointStartIdx[streamIdx] + i + bIdxX*16].data[tIdx] = sharedHist[i][tIdx];
 		}
+		__syncthreads();
 	}
+
 }
 
 __global__ void findExtremaKernel( SiftPoint *pt, float *gDoG, float *gHessian
@@ -280,10 +285,10 @@ __global__ void findExtremaKernel( SiftPoint *pt, float *gDoG, float *gHessian
 				&& pxRank == 9.0
 				&& trace*trace/det < (pow( R_THRESH * 1, 2 ))/R_THRESH
 				&& abs(pxVal) > EXTREMA_THRESH
-				&&  d_PointCount[streamIdx] < MAX_POINTCOUNT)
+				&&  d_PointCount[streamIdx] < MAX_POINTCOUNT )
 			{
 				ptCount = atomicAdd(&d_PointCount[streamIdx], 1);
-				if(ptCount < MAX_POINTCOUNT)
+				if( ptCount < MAX_POINTCOUNT)
 				{
 					pt[ptCount].xpos = gx_;
 					pt[ptCount].ypos = gy;
