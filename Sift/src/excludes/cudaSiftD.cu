@@ -44,6 +44,7 @@ __global__ void OrientationKernel( SiftPoint *pt, float *gGradient
 	__syncthreads();
 
 	// 	Load gradient magnitude and direction regions
+	#pragma unroll
 	for (int i = 0; i < ORIENT_BUFFER; ++i)
 	{
 		sharedMag[i][cuda2DTo1D(tx, ty, bDimX)] = gGradient[cuda2DTo1D(sharedPtPos[i][0] - 7 + tx, sharedPtPos[i][1] - 7 + ty, p)];
@@ -52,6 +53,7 @@ __global__ void OrientationKernel( SiftPoint *pt, float *gGradient
 	__syncthreads();
 
 	// 	Multiply gaussian wnd
+	#pragma unroll
 	for (int i = 0; i < ORIENT_BUFFER; ++i)
 	{
 		sharedMag[i][cuda2DTo1D(tx, ty, bDimX)] *= c_GaussianWnd[ tx + scaleIdx*WND_KERNEL_SIZE];
@@ -61,12 +63,14 @@ __global__ void OrientationKernel( SiftPoint *pt, float *gGradient
 	__syncthreads();
 
 	//	Initialize histogram
+	#pragma unroll
 	for (int i = 0; i < 2; ++i)
 	{
 		sharedHist[tIdx + i*8*32] = 0;
 	}
 	__syncthreads();
 	//	Compute patch histogram
+	#pragma unroll
 	for (int i = 0; i < ORIENT_BUFFER; ++i)
 	{
 		binVal = cudaAssignBin(sharedDir[i][cuda2DTo1D(tx, ty, bDimX)], 32);
@@ -75,6 +79,7 @@ __global__ void OrientationKernel( SiftPoint *pt, float *gGradient
 	__syncthreads();
 
 	//	Find histogram max oientation threshold
+	#pragma unroll
 	for (int i = 0; i < 2; ++i)
 	{
 		shflmax(&sharedHistMaxIdx[8*i], &sharedHist[i*8*32]);
@@ -266,8 +271,10 @@ __global__ void findExtremaKernel( SiftPoint *pt, float *gDoG, float *gHessian
 			pxVal = sharedScale1[cuda2DTo1D( sx, sy, sDimX )];
 
 			//	Compare 3x3 region in all scales (extrema if pxRank == 9.0)
+			#pragma unroll
 			for (int l = -1; l < 2; ++l)
 			{
+				#pragma unroll
 				for (int m = -1; m < 2; ++m)
 				{
 					pxRank += (pxVal >= sharedScale0[cuda2DTo1D( sx + l, sy + m, sDimX )]) ? (1.0):(-1.0);
@@ -449,6 +456,7 @@ __global__ void xblurMultiKernel( float *gDst, float *gSrc
 							, apronLeft, apronRight, apronUp, apronDown, bankOffset );
 
 	// Convolve-x
+	#pragma unroll
 	for (int i = 0; i < N_SCALES + 3; ++i)
 	{
 		int kernelStartIdx = i * B_KERNEL_SIZE;
@@ -461,6 +469,7 @@ __global__ void xblurMultiKernel( float *gDst, float *gSrc
 			if (sx < dataSizeX && gx_ < w && gy < h)
 			{
 				float sum = 0;
+				#pragma unroll
 				for (int k = 0; k < B_KERNEL_SIZE; ++k)
 					sum = __fmaf_rn( c_GaussianBlur[kernelStartIdx + k], shared[cuda2DTo1D( sx + k, sy, sDimX )], sum );
 				__syncthreads();
@@ -514,6 +523,7 @@ __global__ void yblurKernel( float *gDst, float *gSrc, const int scaleIdx
 		if (sy < dataSizeY && gy_ < h && gx < w)
 		{
 				float sum = 0;
+				#pragma unroll
 				for (int j = 0; j < B_KERNEL_SIZE; ++j)
 					sum = __fmaf_rn( c_GaussianBlur[kernelStartIdx + j], shared[cuda2DTo1D(sx, sy + j, sDimX)], sum );
 				__syncthreads();

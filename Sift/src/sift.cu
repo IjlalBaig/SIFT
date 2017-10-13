@@ -135,7 +135,7 @@ int sift( std::string dstPath, std::string *srcPath, int nImgs)
 	bool success = mu_save.try_lock();
 	while (!success)
 	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(2));
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		success = mu_save.try_lock();
 	}
 	mu_save.unlock();
