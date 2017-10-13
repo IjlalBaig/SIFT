@@ -1,7 +1,11 @@
 
 #include <iostream>
+#include <thread>
+#include <mutex>
+#include <chrono>
 #include <fstream>
 #include <iomanip>
+#include <memory>
 #include "sift.h"
 #include "utils.h"
 #include "cudaUtils.h"
@@ -56,10 +60,11 @@ double SiftData::Readback(cudaStream_t stream)
 	return 0.0;
 }
 
+std::mutex mu_save;
 int sift( std::string dstPath, std::string *srcPath, int nImgs)
 {
 	int nImgProcessed = 0;
-
+	SiftPoint *siftResult;
 	while (nImgs > nImgProcessed)
 	{
 		//	Update image queue count
@@ -96,82 +101,30 @@ int sift( std::string dstPath, std::string *srcPath, int nImgs)
 		//	Set device variables
 		initDeviceVariables();
 
-		//	Execute sift on streams
+		//	Upload CudaImage to GPU
 		for (int i = 0; i < nImgQueue; ++i)
 		{
-			//	Upload CudaImage to GPU
 			cuImg[i].Upload(stream[i]);
 			siftData[i].Upload(stream[i]);
-
-			//	Allocate result pointer
-			/*	remove later
-			 *
-			 */
-			int w = iDivUp( cuImg[i].width, pow(2, RESULT_OCTAVE ) );
-			int p = iAlignUp( w, 128);
-			int h = iDivUp( cuImg[i].height, pow(2, RESULT_OCTAVE ) );
-			float *d_res;
-			cv::Mat1f matRes;
-			matRes.create(h, w);
-			CUDA_SAFECALL( cudaMalloc( (void **) &d_res,(size_t)( p*h*sizeof( float ) ) ) );
-			/*
-			 *
-			 *
-			 *
-			 *
-			 *
-			 */
-			extractSift(siftData[i].d_data, d_res, cuImg[i].d_data, cuImg[i].width, cuImg[i].pitch, cuImg[i].height, stream[i], i, 0 );
-			//	display result
-			/*
-			 *
-			 */
-			CUDA_SAFECALL( cudaMemcpy2DAsync( (void *)matRes.data, (size_t)(w*sizeof( float )), (const void *)d_res, (size_t)(p* sizeof( float )), (size_t)(w*sizeof( float )), (size_t)h, cudaMemcpyDeviceToHost, stream[i]) );
-			//	imshow halts kernel execution
-//			image::imshow( matRes );
-			CUDA_SAFECALL( cudaFree( d_res ) );
-			/*
-			 *
-			 *
-			 *
-			 *
-			 */
 		}
+			//	Execute sift on streams
+		for (int i = 0; i < nImgQueue; ++i)
+			extractSift(siftData[i].d_data, cuImg[i].d_data, cuImg[i].width, cuImg[i].pitch, cuImg[i].height, stream[i], i, 0 );
 		//	Download results to CPU
 		for (int i = 0; i < nImgQueue; ++i)
 		{
 			cuImg[i].Readback(stream[i]);
 			siftData[i].Readback(stream[i]);
 		}
-			/*
-			 *
-			 */
-		//	Save result
+
+
 		for (int i = 0; i < nImgQueue; ++i)
 		{
-			std::string srcFile( srcPath[nImgProcessed + i].substr( srcPath[nImgProcessed + i].find_last_of("\\/") + 1, srcPath[nImgProcessed + i].size() ) );
-			std::string dstFile(dstPath + "/" + srcFile + ".sift.txt");
-			std::ofstream outFile(dstFile.c_str());
-
-			for (int j = 0; j < getPointCount( i )-1 ; ++j)
-			{
-				outFile << std::fixed << std::setprecision(1) << float(siftData[i].h_data[j].xpos) << "\t";
-				outFile << std::fixed << std::setprecision(1) << float(siftData[i].h_data[j].ypos) << "\t";
-				outFile << std::fixed << std::setprecision(3) << float(siftData[i].h_data[j].scale) << "\t";
-				outFile << std::fixed << std::setprecision(3) << float(siftData[i].h_data[j].orientation) << "\t";
-
-				float sum = 0.0;
-				for (int k = 0; k < 128; ++k)
-					outFile << std::fixed << std::setprecision(6)<< siftData[i].h_data[j].data[k] << " ";
-				outFile << std::endl;
-				image::drawPoint( matImg[i], siftData[i].h_data[j].xpos, siftData[i].h_data[j].ypos, siftData[i].h_data[j].scale, siftData[i].h_data[j].orientation);
-
-			}
-			for (int i = 0; i < nImgQueue; ++i)
-				image::imshow( matImg[i] );
-			outFile.close();
+			siftResult = siftData[i].h_data;
+			siftData[i].h_data = nullptr;
+			std::thread t1(saveSift, dstPath, srcPath[nImgProcessed + i], siftResult, getPointCount( i ) - 1);
+			t1.detach();
 		}
-
 		//	Destroy cuda streams for queue
 		for (int i = 0; i < nImgQueue; ++i)
 			CUDA_SAFECALL( cudaStreamDestroy(stream[i]));
@@ -179,7 +132,34 @@ int sift( std::string dstPath, std::string *srcPath, int nImgs)
 		//	Update images processed count
 		nImgProcessed += nImgQueue;
 	}
+	bool success = mu_save.try_lock();
+	while (!success)
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(2));
+		success = mu_save.try_lock();
+	}
+	mu_save.unlock();
 	return 0;
+}
+void saveSift(std::string dstPath, std::string srcPath, SiftPoint *h_data, int ptCount)
+{
+	std::unique_lock<std::mutex> locker(mu_save, std::defer_lock);
+	locker.lock();
+	std::string srcFile( srcPath.substr( srcPath.find_last_of("\\/") + 1, srcPath.size() ) );
+	std::string dstFile(dstPath + "/" + srcFile + ".sift.txt");
+	std::ofstream outFile(dstFile.c_str());
+	for (int j = 0; j < ptCount ; ++j)
+	{
+		outFile << std::fixed << std::setprecision(1) << float(h_data[j].xpos) << "\t";
+		outFile << std::fixed << std::setprecision(1) << float(h_data[j].ypos) << "\t";
+		outFile << std::fixed << std::setprecision(3) << float(h_data[j].scale) << "\t";
+		outFile << std::fixed << std::setprecision(3) << float(h_data[j].orientation) << "\t";
+		for (int k = 0; k < 128; ++k)
+			outFile << std::fixed << std::setprecision(6)<< h_data[j].data[k] << " ";
+		outFile << std::endl;
+	}
+	outFile.close();
+	locker.unlock();
 }
 
 

@@ -30,7 +30,6 @@ __global__ void OrientationKernel( SiftPoint *pt, float *gGradient
 	__shared__ float sharedMag[ORIENT_BUFFER][16*16];
 	__shared__ float sharedDir[ORIENT_BUFFER][16*16];
 	__shared__ float sharedHist[ORIENT_BUFFER*32];
-//	__shared__ float sharedHistThresh[ORIENT_BUFFER];
 	__shared__ int sharedHistMaxIdx[ORIENT_BUFFER];
 
 	int tPtCnt = ( scalePtCnt - (bIdxX + 1)*ORIENT_BUFFER  > 0)? ORIENT_BUFFER : scalePtCnt%ORIENT_BUFFER;
@@ -143,8 +142,8 @@ __global__ void DescriptorKernel( SiftPoint *pt, cudaTextureObject_t texObjMag, 
 	// 	Multiply gaussian wnd
 	for (int i = 0; i < 16; ++i)
 	{
-		sharedMag[i][cuda2DTo1D(tx, ty, bDimX)] *= c_GaussianWnd[ tx + scaleIdx*WND_KERNEL_SIZE];
-		sharedMag[i][cuda2DTo1D(ty, tx, bDimX)] *= c_GaussianWnd[ tx + scaleIdx*WND_KERNEL_SIZE];
+		sharedMag[i][cuda2DTo1D(tx, ty, bDimX)] *= c_DescWnd[ tx ];
+		sharedMag[i][cuda2DTo1D(ty, tx, bDimX)] *= c_DescWnd[ tx ];
 	}
 	__syncthreads();
 

@@ -7,8 +7,13 @@
 #define N_OCTAVES 4
 #define N_SCALES 2
 #define BATCH_SIZE 1
-#define MAX_POINTCOUNT 1000
+#define MAX_POINTCOUNT 2500
 #define ORIENT_BUFFER 16
+
+// Define sift constants
+#define SIGMA 1.6f
+#define MIN_THRESH 15.0f
+#define R_THRESH 10.0f
 
 #define EXTREMA_THRESH 10.0f
 #define R_THRESH 10.0f

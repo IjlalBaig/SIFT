@@ -30,5 +30,5 @@ class SiftData {
 };
 
 int sift( std::string dstPath, std::string *srcPath, int nImgs);
-
+void saveSift(std::string dstPath, std::string srcPath, SiftPoint *h_data, int ptCount);
 #endif

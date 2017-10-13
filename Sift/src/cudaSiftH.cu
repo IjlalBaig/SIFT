@@ -6,7 +6,7 @@
 #include "sift.h"
 
 
-void extractSift(SiftPoint *siftPt, float *d_res, float *d_src, int width, int pitch, int height, cudaStream_t &stream, int streamIdx, int octaveIdx )
+void extractSift(SiftPoint *siftPt, float *d_src, int width, int pitch, int height, cudaStream_t &stream, int streamIdx, int octaveIdx )
 {
 
 	int ptCount = getPointCount(streamIdx);
@@ -37,18 +37,6 @@ void extractSift(SiftPoint *siftPt, float *d_res, float *d_src, int width, int p
 		//	Compute octave SiftData
 		computeOctaveSift( siftPt, d_multiDoG, d_multiHessian, d_multiGradient, width, pitch, height, stream, streamIdx, octaveIdx );
 
-		//	Copy back result
-		/*
-		 *
-		 */
-		if (RESULT_OCTAVE == octaveIdx)
-		{
-			int scaleIdx = 0;
-			copyDeviceData(d_res, scaleIdx*pitch*height + d_multiGradient, width, pitch, height, stream );
-		}
-		/*
-		 *
-		 */
 		octaveIdx += 1;
 		if (octaveIdx < N_OCTAVES)
 		{
@@ -62,7 +50,7 @@ void extractSift(SiftPoint *siftPt, float *d_res, float *d_src, int width, int p
 			dim3 blockSize( WIDTH_CONV_BLOCK, HEIGHT_CONV_BLOCK, 1 );
 			dim3 gridSize( iDivUp( width, WIDTH_CONV_BLOCK ), iDivUp( height, HEIGHT_CONV_BLOCK ), 1 );
 			resizeKernel<<<gridSize, blockSize, 0, stream>>>( d_src_, d_multiBlur + N_SCALES*pitch*height, width, pitch, height );
-			extractSift( siftPt, d_res, d_src_, width_, pitch_, height_, stream, streamIdx, octaveIdx );
+			extractSift( siftPt, d_src_, width_, pitch_, height_, stream, streamIdx, octaveIdx );
 			CUDA_SAFECALL( cudaFree( d_src_ ) );
 		}
 
@@ -160,6 +148,12 @@ void initDeviceConstant()
 		imfilter::gaussian1D( gaussianWnd + i * WND_KERNEL_SIZE, sigmaNew, WND_KERNEL_SIZE);
 	}
 	CUDA_SAFECALL( cudaMemcpyToSymbol( c_GaussianWnd, &gaussianWnd, N_SCALES * WND_KERNEL_SIZE * sizeof( float ) ) );
+
+	//	Set descriptor mask
+	float descWnd[16];
+	sigmaNew = SIGMA * 1.5;
+	imfilter::gaussian1D( descWnd, sigmaNew, 16);
+	CUDA_SAFECALL( cudaMemcpyToSymbol( c_DescWnd, &descWnd, 16 * sizeof( float ) ) );
 }
 void allocateOctave( float *&multiBlur, float *&multiDoG
 		, float *&multiHessian, float *&multiGradient

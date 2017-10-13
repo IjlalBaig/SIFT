@@ -1,2 +1,6 @@
 img/img1.ppm
 img/img2.ppm
+img/img3.ppm
+img/img1.ppm
+img/img2.ppm
+img/img3.ppm

@@ -32,32 +32,7 @@ int image::imsave( const std::string path, cv::Mat &img )
 		imwrite( path, img );
 	return 0;
 }
-int image::drawPoint( cv:: Mat &img, float x, float y, float scale, float orientation )
-{
-	/*
-	 *
-	 *
-	 */
-	int subsample = 0;
-	float scale_ = scale/1.6;
-	if (scale_ >= 0.0 && scale_ < 2.0)
-		subsample = 1;
-	else if (scale_ >= 2.0 && scale_ < 4.0)
-		subsample = 2;
-	else if (scale_ >= 4.0 && scale_ < 8.0)
-		subsample = 4;
-	else if (scale_ >= 8.0 && scale_ < 16.0)
-		subsample = 8;
-	/*
-	 *
-	 *
-	 */
-	cv::Point pt1 = cv::Point( x*subsample, y*subsample );
-	cv::Point pt2 = cylindrical2Catesian( pt1, subsample*8, -orientation );	// orientation is clockwise
-	cv::circle( img, pt1, subsample*8, cv::Scalar( 0, 255, 255 ), 1, 8, 0 );
-	cv::line( img, pt1, pt2, cv::Scalar( 0, 255, 255 ), 1, 8, 0 );
-	return 0;
-}
+
 /*
  *
  *

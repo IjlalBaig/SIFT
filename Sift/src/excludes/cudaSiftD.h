@@ -2,13 +2,7 @@
 #define CUDA_SIFT_D_H
 #include <stdio.h>
 #include "../utils.h"
-// Define sift constants
-#define SIGMA 1.6f
-#define MIN_THRESH 15.0f
-#define R_THRESH 10.0f
 
-// Define kernel parameters
-//#define B_KERNEL_RADIUS 4
 #define B_KERNEL_SIZE  (2*B_KERNEL_RADIUS + 1)
 
 
@@ -24,6 +18,7 @@ __constant__ float c_GaussianWnd[N_SCALES * WND_KERNEL_SIZE];
 __constant__ float c_EdgeThreshold;
 __constant__ float c_ExtremaThreshold;
 __constant__ unsigned int c_MaxPointCount;
+__constant__ float c_DescWnd[16];
 
 // static memory variables
 __device__ unsigned int d_PointCount[2];
